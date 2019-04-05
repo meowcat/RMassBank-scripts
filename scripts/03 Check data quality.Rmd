@@ -1,0 +1,58 @@
+---
+title: "Raw extraction evaluation RMassBank"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_knit$set(root.dir= "C:/Daten/Michele/20190329 Karin MassBank")
+```
+
+## Summary for each cpd
+
+```{r libraries}
+
+
+library(RMassBank)
+library(plyr)
+library(mzR)
+
+```
+
+## Including Plots
+
+EIC with associated triggered MS/MS, per compound
+```{r plots, echo=FALSE}
+#test
+w_pos <- loadMsmsWorkspace("results/spectra-pH-msmsRead.RData")
+w_neg <- loadMsmsWorkspace("results/spectra-mH-msmsRead.RData")
+
+for(i in seq_along(w_pos@spectra))
+{
+  cpd <- w_pos@spectra[[i]]
+  eic <- attr(cpd, "eic")
+  plot(intensity ~ rt, eic, type='l')
+  if(length(cpd@children) > 0)
+  {
+    msData <- laply(cpd@children, function(ch)
+      c(rt=ch@rt[[1]], tic=ch@tic[[1]]))
+    lines(tic ~ rt, msData, col="red", type='h')
+  }
+  found <- ifelse(cpd@found, "(OK)", "(not found)")
+  title(main=paste(cpd@name, "pos", found))
+  
+  cpd <- w_neg@spectra[[i]]
+  eic <- attr(cpd, "eic")
+  plot(intensity ~ rt, eic, type='l')
+  if(length(cpd@children) > 0)
+  {
+    msData <- laply(cpd@children, function(ch)
+      c(rt=ch@rt[[1]], tic=ch@tic[[1]]))
+    lines(tic ~ rt, msData, col="red", type='h')
+  }
+  found <- ifelse(cpd@found, "(OK)", "(not found)")
+  title(main=paste(cpd@name, "neg", found))
+}
+
+```
+
