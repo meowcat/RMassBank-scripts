@@ -1,20 +1,19 @@
 
 
 library(RMassBank)
-library(plyr)
 library(mzR)
+library(plyr)
 library(dplyr)
-dir <- "C:/Daten/Michele/20190329 Karin MassBank/"
+dir <- "C:/Daten/Michele/20190625 Karin MassBank-QE/"
 setwd(dir)
-
-inputDir <- "C:/Daten/Michele/20181031 MassBank March/mzXML_fixed"
+inputDir <- c("C:\\Daten\\Michele\\20190625 Karin MassBank-QE\\mzXML")
 inFiles <- list.files(inputDir, ".mzXML", full.names = T)
 
 compounds <- read.csv("input/SubstanzenKarin_Massbank.csv", sep=";")
 
 checkFiles <- data.frame(files = inFiles, stringsAsFactors = FALSE)
 checkFiles <- checkFiles %>% mutate(basefiles = basename(files)) %>%
-  mutate(id = strsplit(basefiles, '_') %>% lapply(`[`, 3) %>% as.integer)
+  mutate(id = strsplit(basefiles, '[_.]') %>% lapply(`[`, 3) %>% as.integer)
 
 compounds$found <- compounds$ID.Eawag %in% checkFiles$id
 
@@ -39,7 +38,9 @@ write.csv(compoundsMsRead, file="results/compoundsMsR.csv")
 
 # Process positive mode
 w <- newMsmsWorkspace()
+#wPeak <- msmsRead.peak(w, filetable="results/compoundsMsR.csv", readMethod="mzR", mode="pH" )
 w <- msmsRead(w, filetable="results/compoundsMsR.csv", readMethod="mzR", mode="pH" )
+
 eics <- alply(compoundsMsRead, 1, function(cpd)
   {
   message(cpd[["Files"]])
@@ -59,13 +60,14 @@ archiveResults(w, "results/spectra-pH-msmsRead.RData")
 # Process negative mode
 
 w <- newMsmsWorkspace()
+#wPeak <- msmsRead.peak(w, filetable="results/compoundsMsR.csv", readMethod="mzR", mode="mH" )
 w <- msmsRead(w, filetable="results/compoundsMsR.csv", readMethod="mzR", mode="mH" )
 eics <- alply(compoundsMsRead, 1, function(cpd)
 {
   message(cpd[["Files"]])
   d <- openMSfile(cpd[["Files"]])
   h <- header(d)
-  h <- h[h$polarity == 1,]
+  h <- h[h$polarity == 0,]
   mz <- findMz(cpd[["ID"]], mode = "mH", ppm = 10)
   findEIC(d, mz, headerCache = h)
 })
