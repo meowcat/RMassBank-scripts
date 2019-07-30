@@ -144,34 +144,51 @@ w@spectra <- lapply(w@spectra, function(cpd) {
 
 # evaluation:
 # aggregate and keep the best result for every peak
-# for every formula, keep the best correlation of all children
 ag <- aggregateSpectra(w)
-ag <- ag %>% group_by(cpdID, scan, mzFound) %>% arrange(!good, abs(dppm)) %>% slice(1)
-ag <- ag %>% ungroup() %>% group_by(cpdID, formula) %>% mutate(
-  eicScoreCor = max(eicScoreCor, na.rm = TRUE), eicScoreDot = max(eicScoreDot, na.rm = TRUE)
-) 
+ag <- ag %>% 
+  dplyr::group_by(cpdID, scan, mzFound) %>% 
+  dplyr::arrange(!good, abs(dppm)) %>% 
+  dplyr::slice(1)
+# for every formula, keep the best correlation of all children;
+# when no formula present, keep the peak alone
+ag$formula_ <- factor(ag$formula) %>% as.numeric()
+ag$formula_[is.na(ag$formula_)] <- -seq_along(ag$formula_[is.na(ag$formula_)])
+ag <- ag %>% 
+  group_by(cpdID, formula_) %>% 
+  dplyr::mutate(
+    eicScoreCorMax = max(eicScoreCor, na.rm = TRUE),
+    eicScoreDotMax = max(eicScoreDot, na.rm = TRUE)
+  ) %>%
+  dplyr::mutate(
+    eicScoreCorMin = min(eicScoreCor, na.rm = TRUE),
+    eicScoreDotMin = min(eicScoreDot, na.rm = TRUE)
+  ) 
 
-ag$eicScoreCor0 <- ag$eicScoreCor %>% replace_na(0)
-ag$eicScoreDot0 <- ag$eicScoreDot %>% replace_na(0)
+ag$eicScoreCorMax[is.infinite(ag$eicScoreCorMax)] <- NA
+ag$eicScoreDotMax[is.infinite(ag$eicScoreDotMax)] <- NA
+ag$eicScoreCorMin[is.infinite(ag$eicScoreCorMin)] <- NA
+ag$eicScoreDotMin[is.infinite(ag$eicScoreDotMin)] <- NA
+# 
+# ag$eicScoreCor0 <- ag$eicScoreCor %>% replace_na(0)
+# ag$eicScoreDot0 <- ag$eicScoreDot %>% replace_na(0)
+
+ag$eicScoreCor0 <- ag$eicScoreCorMin %>% replace_na(0)
+ag$eicScoreDot0 <- ag$eicScoreDotMin %>% replace_na(0)
 
 
-setpoint <- roc(good ~ eicScoreCor, data=ag, levels=c("FALSE", "TRUE"), direction="<")
+setpoint <- roc(good ~ eicScoreCorMin, data=ag, levels=c("FALSE", "TRUE"), direction="<")
 plot(setpoint)
 fscore <- 2 * setpoint$sensitivities * setpoint$specificities / (setpoint$sensitivities + setpoint$specificities)
 plot(fscore)
 maxFscore <- which.max(fscore)
 thresholdCor <- setpoint$thresholds[maxFscore]
 
-setpoint <- roc(good ~ eicScoreDot, data=ag, levels=c("FALSE", "TRUE"), direction="<")
+setpoint <- roc(good ~ eicScoreDotMin, data=ag, levels=c("FALSE", "TRUE"), direction="<")
 plot(setpoint)
 fscore <- 2 * setpoint$sensitivities * setpoint$specificities / (setpoint$sensitivities + setpoint$specificities)
 plot(fscore)
 maxFscore <- which.max(fscore)
 thresholdDot <- setpoint$thresholds[maxFscore]
-
-ag$eicScoreCor0 <- ag$eicScoreCor %>% replace_na(0)
-ag$eicScoreDot0 <- ag$eicScoreDot %>% replace_na(0)
-
 
 setpoint <- roc(good ~ eicScoreCor0, data=ag, levels=c("FALSE", "TRUE"), direction="<")
 plot(setpoint)
@@ -189,7 +206,7 @@ maxFscore <- which.max(fscore)
 thresholdDot0 <- setpoint$thresholds[maxFscore]
 
 
-plot(ag$eicScoreCor, ag$eicScoreDot)
+plot(ag$eicScoreCorMax, ag$eicScoreDotMax)
 abline(v=thresholdCor, col="red")
 abline(h=thresholdDot, col="red")
 abline(v=thresholdCor0, col="orange")
