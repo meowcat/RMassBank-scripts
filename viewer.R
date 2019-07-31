@@ -8,24 +8,22 @@ viewer <- function(w)
   ui <- fixedPage(
     sidebarLayout(
       sidebarPanel(
-          selectInput("compound", "Compound:" ,names(w@spectra), size=20, selectize=FALSE)
+        fixedRow(dataTableOutput("compound")), #, "Compound:" ,names(w@spectra), size=20, selectize=FALSE)
+        fixedRow(dataTableOutput("spectrum"))
       ),
       mainPanel(
         # first row: select cpd and MS
 
         tabsetPanel(
           tabPanel("spectra",
-                   fixedRow(
-                     numericInput("spectrum", "Spectrum:", 1,1,1)
-                   ),
+                   # fixedRow(
+                   #   numericInput("spectrum", "Spectrum:", 1,1,1)
+                   # ),
                    # second row: display MS
                    fixedRow(
                      column(7, plotOutput("spectrumPlot")),
-                     column(5, tabsetPanel(
-                       tabPanel("boxplot", plotOutput("eicCorPlot")),
-                       tabPanel("xyplot", plotOutput("peaksXyPlot"))
-                                 )
-                   )),
+                     column(5, plotOutput("eicCorPlot"))
+                   ),
                    # third row: display peak table
                    fixedRow(
                      dataTableOutput("peaksTable")
@@ -45,23 +43,63 @@ viewer <- function(w)
   server <- function(input, output, session)
   {
     observe({
-      cpd <- as.character(input$compound)
-      if(cpd %in% names(w@spectra))
-      {
-        updateNumericInput(session, "spectrum", value = 1, 
-                           min = 1, max = length(w@spectra[[cpd]]@children))
-        output$eicPlot <- renderPlot(plotEic(w@spectra[[cpd]]))
-      }
+      
     }
       )
+    
+    
+    
+    #output$ms2table <- 
+    compound <- reactive({
+      names(w@spectra)[input$compound_rows_selected]
+    })
+    
+    output$compound <-  DT::renderDataTable({
+      data.frame(ok = rep(TRUE, length(w@spectra)), name = names(w@spectra)) %>%
+        datatable(selection = "single", filter="none",
+                  class="compact",
+                  options = list("dom" = "t", scrollY=350, paging=FALSE),
+                  editable = list(target="cell", disable=c(2))) %>%
+        DT::formatStyle(columns = c(1,2), fontSize = '75%') %>%
+        DT::fo
+        
+    })
+    
+    spectrum <- reactive({
+      input$spectrum_rows_selected
+    })
+    
+    output$spectrum <-  DT::renderDataTable({
+      cpd <- as.character(compound())
+      if(length(cpd) == 0)
+        return()
+      if(cpd %in% names(w@spectra))
+      {
+        return(data.frame(id = seq_along(w@spectra[[cpd]]@children)) %>%
+                 datatable(selection = "single", filter="none",
+                           class="compact", extensions = "KeyTable",
+                           options = list("dom" = "tp", keys = TRUE)) %>%
+          DT::formatStyle(columns = 1, fontSize = '75%'))
+      }
+    })
+    
     observe({
-      cpd <- input$compound
-      spectrum <- input$spectrum
+      cpd <- compound()
+      output$eicPlot <- renderPlot(plotEic(w@spectra[[cpd]]))
+    })
+    
+    observe({
+      cpd <- compound()
+      spectrum <- spectrum()
+      if(length(cpd) == 0)
+        return()
+      if(length(spectrum) == 0)
+        return()
       
       if(!(cpd %in% names(w@spectra)))
         return()
       cpd <- w@spectra[[cpd]]
-      if(!(spectrum < length(cpd@children)))
+      if(!(spectrum <= length(cpd@children)))
         return()
       # get the complete peak table to find the total range
       mzRange <- range(unlist(
@@ -73,36 +111,8 @@ viewer <- function(w)
         plotSpectrum(peaks, mzRange)
         spectrumLegend(cpd, cpd@children[[spectrum]])
         })
-      output$eicCorPlot <- renderPlot({
-        cor <- property(cpd@children[[spectrum]], "cor")
-        if(is.null(cor))
-          plot.new()
-        else {
-          d <- getData(cpd@children[[spectrum]])
-          # remove "bad" versions of the peak if there is a "good" one:
-          d <- d[order(!d$good, abs(d$dppm)),,drop=FALSE]
-          d <- d[!duplicated(d$mz),,drop=FALSE]
-          par(mar=c(3,2,1,1)+0.1)
-          boxplot(cor ~ good, data = d)
-          bp <- boxplot(cor ~ good, data=d, horizontal=F, outline=FALSE)
-          points(jitter(match(d$good, bp$names)), d$cor)
-          # , 
-          #        cex=d$intensity/max((d$intensity)) * 4,
-          #        col=colorRamp(c("blue", "red"))(
-          #          pmin(10,abs(d$dppm), na.rm = TRUE) / 10 
-          #        ),
-          #        pch=19)
-          #         
-          
-          eps <- 0.01
-          # plot(hist(cor, breaks=40))
-          # lines(density(cor, bw="SJ"))
-          sdCor <- sd(d$cor, na.rm = TRUE)
-          abline(h=cpd@children[[spectrum]]@info$singlePointCor, col="red")
-          abline(h=bp$stats[5,1]+eps, col="blue", lty=2)
-        }
-      })
-      output$peaksXyPlot <- renderPlot(xyplot(cpd, spectrum))
+      output$eicCorPlot <- renderPlot(plotEicCor(w, cpd, spectrum))
+      #output$peaksXyPlot <- renderPlot(xyplot(cpd, spectrum))
     })
   }
   shinyApp(server=server, ui=ui)
@@ -124,6 +134,32 @@ plotSpectrum <- function(peaks, mzRange=NA)
          type='h', lwd=2, col="red")
 }
 
+plotEicCor <- function(w, cpd, spectrum, metric = "eicScoreCor") {
+  cor <- property(cpd@children[[spectrum]], metric)
+  if(is.null(cor))
+    plot.new()
+  else {
+    d <- getData(cpd@children[[spectrum]])
+    # remove "bad" versions of the peak if there is a "good" one:
+    d <- d[order(!d$good, abs(d$dppm)),,drop=FALSE]
+    d <- d[!duplicated(d$mz),,drop=FALSE]
+    par(mar=c(3,2,1,1)+0.1)
+    d$metric <- d[,metric] %>% replace_na(0)
+    #boxplot(metric ~ good, data = d)
+    bp <- boxplot(metric ~ good, data=d, horizontal=F, outline=FALSE)
+    points(jitter(match(d$good, bp$names)), d$metric)
+    # , 
+    #        cex=d$intensity/max((d$intensity)) * 4,
+    #        col=colorRamp(c("blue", "red"))(
+    #          pmin(10,abs(d$dppm), na.rm = TRUE) / 10 
+    #        ),
+    #        pch=19)
+    #         
+    
+    abline(h=attr(w, "eicScoreFilter")[[metric]], col="red")
+  }
+}
+
 plotEic <- function(cpd)
 {
     eic <- attr(cpd, "eic")
@@ -136,28 +172,7 @@ plotEic <- function(cpd)
     }
 }
 
-xyplot <- function(cpd, spectrum)  {
-  cor <- property(cpd@children[[spectrum]], "cor")
-  if(is.null(cor))
-    plot.new()
-  else {
-    d <- getData(cpd@children[[spectrum]])
-    # remove "bad" versions of the peak if there is a "good" one:
-    
-    d <- d[order(!d$good, abs(d$dppm)),,drop=FALSE]
-    d <- d[!duplicated(d$mz),,drop=FALSE]
-    
-    colGood <- c("TRUE" = "green", "FALSE" = "red")
-    pchPeak <- c("TRUE" = 21, "FALSE" = 23)
-    par(mar=c(3,2,1,1)+0.1)
-    plot(pmin(abs(d$dppm), 10, na.rm=TRUE), d$cor,
-         pch=pchPeak[as.character(d$good)], cex=log10(d$intensity)+0.2,
-         xlim=c(0,10))
-    
-    
-    abline(h=cpd@children[[spectrum]]@info$singlePointCor, col="red")
-  }
-}
+
 
 spectrumLegend <- function(cpd, sp)
 {
