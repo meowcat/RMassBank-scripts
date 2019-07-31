@@ -153,46 +153,53 @@ ag <- ag %>%
 # when no formula present, keep the peak alone
 ag$formula_ <- factor(ag$formula) %>% as.numeric()
 ag$formula_[is.na(ag$formula_)] <- -seq_along(ag$formula_[is.na(ag$formula_)])
-ag <- ag %>% 
-  group_by(cpdID, formula_) %>% 
-  dplyr::mutate(
-    eicScoreCorMax = max(eicScoreCor, na.rm = TRUE),
-    eicScoreDotMax = max(eicScoreDot, na.rm = TRUE)
-  ) %>%
-  dplyr::mutate(
-    eicScoreCorMin = min(eicScoreCor, na.rm = TRUE),
-    eicScoreDotMin = min(eicScoreDot, na.rm = TRUE)
-  ) 
-
-ag$eicScoreCorMax[is.infinite(ag$eicScoreCorMax)] <- NA
-ag$eicScoreDotMax[is.infinite(ag$eicScoreDotMax)] <- NA
-ag$eicScoreCorMin[is.infinite(ag$eicScoreCorMin)] <- NA
-ag$eicScoreDotMin[is.infinite(ag$eicScoreDotMin)] <- NA
+# ag <- ag %>% 
+#   group_by(cpdID, formula_) %>% 
+#   dplyr::mutate(
+#     eicScoreCorMax = max(eicScoreCor, na.rm = TRUE),
+#     eicScoreDotMax = max(eicScoreDot, na.rm = TRUE)
+#   ) %>%
+#   dplyr::mutate(
+#     eicScoreCorMin = min(eicScoreCor, na.rm = TRUE),
+#     eicScoreDotMin = min(eicScoreDot, na.rm = TRUE)
+#   ) 
 # 
+# ag$eicScoreCorMax[is.infinite(ag$eicScoreCorMax)] <- NA
+# ag$eicScoreDotMax[is.infinite(ag$eicScoreDotMax)] <- NA
+# ag$eicScoreCorMin[is.infinite(ag$eicScoreCorMin)] <- NA
+# ag$eicScoreDotMin[is.infinite(ag$eicScoreDotMin)] <- NA
+# # 
 # ag$eicScoreCor0 <- ag$eicScoreCor %>% replace_na(0)
 # ag$eicScoreDot0 <- ag$eicScoreDot %>% replace_na(0)
 
-ag$eicScoreCor0 <- ag$eicScoreCorMin %>% replace_na(0)
-ag$eicScoreDot0 <- ag$eicScoreDotMin %>% replace_na(0)
+ag$eicScoreCor0 <- ag$eicScoreCor %>% replace_na(0)
+ag$eicScoreDot0 <- ag$eicScoreDot %>% replace_na(0)
 
+f1 <- function(sens, spec)
+  2 * sens * spec / (sens + spec)
+fBeta <- function(beta) function(sens, spec)
+  (1 + beta^2) * (sens * spec) / ((spec * beta^2) + sens)
+  
+#fsc <- f1
+fsc <- fBeta(1.5)
 
-setpoint <- roc(good ~ eicScoreCorMin, data=ag, levels=c("FALSE", "TRUE"), direction="<")
+setpoint <- roc(good ~ eicScoreCor, data=ag, levels=c("FALSE", "TRUE"), direction="<")
 plot(setpoint)
-fscore <- 2 * setpoint$sensitivities * setpoint$specificities / (setpoint$sensitivities + setpoint$specificities)
+fscore <- fsc(setpoint$sensitivities, setpoint$specificities)
 plot(fscore)
 maxFscore <- which.max(fscore)
 thresholdCor <- setpoint$thresholds[maxFscore]
 
-setpoint <- roc(good ~ eicScoreDotMin, data=ag, levels=c("FALSE", "TRUE"), direction="<")
+setpoint <- roc(good ~ eicScoreDot, data=ag, levels=c("FALSE", "TRUE"), direction="<")
 plot(setpoint)
-fscore <- 2 * setpoint$sensitivities * setpoint$specificities / (setpoint$sensitivities + setpoint$specificities)
+fscore <- fsc(setpoint$sensitivities, setpoint$specificities)
 plot(fscore)
 maxFscore <- which.max(fscore)
 thresholdDot <- setpoint$thresholds[maxFscore]
 
 setpoint <- roc(good ~ eicScoreCor0, data=ag, levels=c("FALSE", "TRUE"), direction="<")
 plot(setpoint)
-fscore <- 2 * setpoint$sensitivities * setpoint$specificities / (setpoint$sensitivities + setpoint$specificities)
+fscore <- fsc(setpoint$sensitivities, setpoint$specificities)
 plot(fscore)
 maxFscore <- which.max(fscore)
 thresholdCor0 <- setpoint$thresholds[maxFscore]
@@ -200,13 +207,13 @@ thresholdCor0 <- setpoint$thresholds[maxFscore]
 
 setpoint <- roc(good ~ eicScoreDot0, data=ag, levels=c("FALSE", "TRUE"), direction="<")
 plot(setpoint)
-fscore <- 2 * setpoint$sensitivities * setpoint$specificities / (setpoint$sensitivities + setpoint$specificities)
+fscore <- fsc(setpoint$sensitivities, setpoint$specificities)
 plot(fscore)
 maxFscore <- which.max(fscore)
 thresholdDot0 <- setpoint$thresholds[maxFscore]
 
 
-plot(ag$eicScoreCorMax, ag$eicScoreDotMax)
+plot(ag$eicScoreCor, ag$eicScoreDot, col=ag$good+1)
 abline(v=thresholdCor, col="red")
 abline(h=thresholdDot, col="red")
 abline(v=thresholdCor0, col="orange")
@@ -285,29 +292,6 @@ abline(h=thresholdDot, col="red")
 abline(v=thresholdCor0, col="orange")
 abline(h=thresholdDot0, col="orange")
 
-.lenWrap <- function(fun) function(x) {
-  res <- fun(x)
-  if(length(res) == 0) res <- 0
-  if(is.na(res)) res <- 0
-  res
-}
+attr(w, "eicScoreFilter") <- list("eicScoreCor" = thresholdCor,
+                                 "eicScoreDot" = thresholdDot)
 
-hist2d(ag$eicScoreCor, ag$eicScoreDot, FUN = .lenWrap(function(x) log(length(x))))
-
-
-
-
-points(ag[!ag$good,]$eicScoreCor, ag[!ag$good,]$eicScoreDot, col="red")
-hist2d(ag$eicScoreCor, ag$eicScoreDot, FUN = function(x) replace_na(log(length(x)), 0))
-hist2d(ag$eicScoreCor, ag$eicScoreDot)
-
-# not useful, since there are very few of these peaks
-# hist2d(ag[!ag$good,]$eicScore0, ag[!ag$good,]$dppm)
-# not useful, since almost all of them are 0 then_
-# hist2d(ag[!ag$good,]$eicScore, replace_na(ag[!ag$good,]$dppm, 0))
-
-# w <- loadMsmsWorkspace("results/spectra-mH-msmsRead.RData")
-# w <- msmsWorkflow(w, "mH", c(2:4))
-# archiveResults(w, "results/spectra-mH-processed-step4.RData")
-# w <- msmsWorkflow(w, "mH", c(5:8))
-# archiveResults(w, "results/spectra-mH-processed.RData")
