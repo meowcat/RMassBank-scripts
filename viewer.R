@@ -7,6 +7,13 @@ source("viewer-include.R")
 
 viewer <- function(w)
 {
+  if(is.list(w)) {
+    w_ <- reactiveValues(
+      w = w$w,
+      specOk = w$specOk,
+      cpdOk = w$cpdOk 
+    )
+  } else {
   w_ <- reactiveValues(w=w,
                        specOk = lapply(
                          w@spectra, function(cpd)
@@ -17,7 +24,7 @@ viewer <- function(w)
                          w@spectra, function(cpd)
                            cpd@found
                        ))
-                       )
+                       )}
   ui <- fixedPage(
     tags$style("
       .checkbox { /* checkbox is a div class*/
@@ -33,7 +40,8 @@ viewer <- function(w)
       sidebarPanel(
         fixedRow(dataTableOutput("compound")), #, "Compound:" ,names(w@spectra), size=20, selectize=FALSE)
         fixedRow(dataTableOutput("spectrum")),
-        fixedRow(actionButton("quit", "Quit"))
+        fixedRow(actionButton("quit", "Quit")),
+        fixedRow(actionButton("reset", "Reset"))
       ),
       mainPanel(
         # first row: select cpd and MS
@@ -169,7 +177,7 @@ viewer <- function(w)
       if(length(spectrum) == 0)
         return()
       
-      if(!(cpd %in% names(w@spectra)))
+      if(!(cpd %in% names(w_$w@spectra)))
         return()
       cpd <- w_$w@spectra[[cpd]]
       if(!(spectrum <= length(cpd@children)))
@@ -179,9 +187,14 @@ viewer <- function(w)
         lapply(cpd@children, function(sp) range(mz(sp)))
       ))
       peaks <- getData(cpd@children[[spectrum]])
-      output$peaksTable <- renderDataTable(peaks)
+      output$peaksTable <- renderDataTable({
+        peaks %>%
+          datatable() %>%
+          formatRound(c("mz", "mzRaw", "mzCenter", "mzCalc"), digits = 4) %>%
+          formatRound(c("dppm", "dppmBest", "eicScoreCor", "eicScoreDot"), digits = 2) %>%
+          formatSignif("intensity", 2) })
       output$spectrumPlot <- renderPlot({
-        plotSpectrum(peaks, mzRange)
+        plotSpectrum(peaks, mzRange=mzRange, w=w_$w)
         spectrumLegend(cpd, cpd@children[[spectrum]])
         })
       output$eicCorPlot <- renderPlot(plotEicCor(w_$w, cpd, spectrum))
@@ -191,24 +204,43 @@ viewer <- function(w)
     observeEvent(input$quit, {
       stopApp(returnValue = reactiveValuesToList(w_))
     })
+    
+    observeEvent(input$reset, {
+      w_$specOk <- lapply(w_$w@spectra, function(cpd)
+                               unlist(lapply(cpd@children, function(sp)
+                                 sp@ok)))
+      w_$cpdOk <- unlist(lapply(
+                             w_$w@spectra, function(cpd)
+                               cpd@found
+                           ))
+      })
+    
   }
   return(runApp(shinyApp(server=server, ui=ui)))
 }
 
 par(mfrow=c(1,1))
-plotSpectrum <- function(peaks, mzRange=NA)
+plotSpectrum <- function(peaks, mzRange=NA, w, metric = "eicScoreCor")
 {
   xlim <- range(peaks$mz, mzRange, na.rm = TRUE)
   maxint <- max(peaks$intensity, na.rm=TRUE)
+  # select only the best peak
+  peaks <- peaks %>% group_by(mz) %>% arrange(!good, abs(dppm)) %>% slice(1)
   peaks$intrel <- peaks$intensity/maxint*100
+  peaks$corOk <- peaks[,metric] > attr(w, "eicScoreFilter")[[metric]]
   par(mar=c(3,2,1,1)+0.1)
   plot.new()
   plot.window(xlim=xlim+c(-5,5), ylim=c(-10,120))
   axis(1)
   axis(2)
   points(intrel ~ mz, data=peaks, type='h', lwd=1, col="black")
+
   points(intrel ~ mz, data=peaks[peaks$good,,drop=FALSE],
          type='h', lwd=2, col="red")
+  points(intrel ~ mz, data=peaks[peaks$corOk & peaks$good,,drop=FALSE],
+         type='h', lwd=2, col="darkgreen")
+  points(intrel ~ mz, data=peaks[peaks$corOk & !peaks$good,,drop=FALSE],
+         type='h', lwd=2, col="green")
 }
 
 plotEicCor <- function(w, cpd, spectrum, metric = "eicScoreCor") {
