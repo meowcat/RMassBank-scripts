@@ -3,13 +3,37 @@ library(plyr)
 library(RMassBank)
 library(MSnbase)
 
+source("viewer-include.R")
+
 viewer <- function(w)
 {
+  w_ <- reactiveValues(w=w,
+                       specOk = lapply(
+                         w@spectra, function(cpd)
+                           unlist(lapply(cpd@children, function(sp)
+                             sp@ok))
+                       ),
+                       cpdOk = unlist(lapply(
+                         w@spectra, function(cpd)
+                           cpd@found
+                       ))
+                       )
   ui <- fixedPage(
+    tags$style("
+      .checkbox { /* checkbox is a div class*/
+        line-height: 50%;
+        margin-top: 2px;
+        margin-bottom: 2px; /*set the margin, so boxes don't overlap*/
+      }
+      .form-group {
+        margin-bottom: 0px;
+      }
+      "),
     sidebarLayout(
       sidebarPanel(
         fixedRow(dataTableOutput("compound")), #, "Compound:" ,names(w@spectra), size=20, selectize=FALSE)
-        fixedRow(dataTableOutput("spectrum"))
+        fixedRow(dataTableOutput("spectrum")),
+        fixedRow(actionButton("quit", "Quit"))
       ),
       mainPanel(
         # first row: select cpd and MS
@@ -42,26 +66,27 @@ viewer <- function(w)
   )
   server <- function(input, output, session)
   {
-    observe({
-      
-    }
-      )
-    
-    
-    
     #output$ms2table <- 
     compound <- reactive({
-      names(w@spectra)[input$compound_rows_selected]
+      names(w_$w@spectra)[input$compound_rows_selected]
+    })
+    
+    compoundIndex <- reactive({
+      input$compound_rows_selected
     })
     
     output$compound <-  DT::renderDataTable({
-      data.frame(ok = rep(TRUE, length(w@spectra)), name = names(w@spectra)) %>%
+      data.frame(ok = shinyInput(checkboxInput, length(w_$w@spectra), "cpd_selected", 
+                                 value=isolate({w_$cpdOk})),
+                 name = names(w_$w@spectra)) %>%
         datatable(selection = "single", filter="none",
                   class="compact",
-                  options = list("dom" = "t", scrollY=350, paging=FALSE),
-                  editable = list(target="cell", disable=c(2))) %>%
-        DT::formatStyle(columns = c(1,2), fontSize = '75%') %>%
-        DT::fo
+                  options = list("dom" = "t", scrollY=350, paging=FALSE,
+                                 "preDrawCallback" = .preDrawCallback,
+                                 "drawCallback" = .drawCallback),
+                  escape = FALSE,
+                  rownames = FALSE) %>%
+        DT::formatStyle(columns = c(1,2), fontSize = '75%')
         
     })
     
@@ -73,19 +98,67 @@ viewer <- function(w)
       cpd <- as.character(compound())
       if(length(cpd) == 0)
         return()
-      if(cpd %in% names(w@spectra))
+      if(cpd %in% names(w_$w@spectra))
       {
-        return(data.frame(id = seq_along(w@spectra[[cpd]]@children)) %>%
+        return(data.frame(
+          ok = shinyInput(checkboxInput, length(w_$w@spectra[[cpd]]@children),
+                          paste0("spec_", compoundIndex(), "_selected"), 
+                          isolate({w_$specOk[[compoundIndex()]]})),
+          id = seq_along(w_$w@spectra[[cpd]]@children)
+        ) %>%
                  datatable(selection = "single", filter="none",
                            class="compact", extensions = "KeyTable",
-                           options = list("dom" = "tp", keys = TRUE)) %>%
-          DT::formatStyle(columns = 1, fontSize = '75%'))
+                           options = list(
+                             "dom" = "tp", keys = TRUE,
+                             "preDrawCallback" = .preDrawCallback,
+                             "drawCallback" = .drawCallback),
+                           escape = FALSE,
+                           rownames = FALSE) %>%
+          DT::formatStyle(columns = c(1,2), fontSize = '75%'))
       }
     })
     
     observe({
       cpd <- compound()
-      output$eicPlot <- renderPlot(plotEic(w@spectra[[cpd]]))
+      spectrum <- spectrum()
+      idx <- compoundIndex()
+      if(length(cpd) == 0)
+        return()
+      if(length(spectrum) == 0)
+        return()
+      if(length(idx) == 0)
+        return()
+      
+      nspec <- length(w_$w@spectra[[cpd]]@children)
+      specSelected <- shinyValue(input,
+                                 paste0("spec_", compoundIndex(), "_selected"),
+                                 nspec)
+      if(!any(is.na(specSelected))) {
+        specOk <- w_$specOk
+        specOk[[compoundIndex()]] <- specSelected
+        w_$specOk  <- specOk
+      }
+      })
+    
+    observe({
+      cpd <- compound()
+      idx <- compoundIndex()
+      if(length(cpd) == 0)
+        return()
+      if(length(idx) == 0)
+        return()
+      
+      ncpd <- length(w_$w@spectra)
+      cpdSelected <- shinyValue(input,
+                                 paste0("cpd_selected"),
+                                 ncpd)
+      w_$cpdOk <- cpdSelected
+    })
+      
+    
+    observe({
+      cpd <- compound()
+      output$eicPlot <- renderPlot(plotEic(w_$w@spectra[[cpd]]))
     })
     
     observe({
@@ -98,7 +171,7 @@ viewer <- function(w)
       
       if(!(cpd %in% names(w@spectra)))
         return()
-      cpd <- w@spectra[[cpd]]
+      cpd <- w_$w@spectra[[cpd]]
       if(!(spectrum <= length(cpd@children)))
         return()
       # get the complete peak table to find the total range
@@ -111,11 +184,15 @@ viewer <- function(w)
         plotSpectrum(peaks, mzRange)
         spectrumLegend(cpd, cpd@children[[spectrum]])
         })
-      output$eicCorPlot <- renderPlot(plotEicCor(w, cpd, spectrum))
+      output$eicCorPlot <- renderPlot(plotEicCor(w_$w, cpd, spectrum))
       #output$peaksXyPlot <- renderPlot(xyplot(cpd, spectrum))
     })
+    
+    observeEvent(input$quit, {
+      stopApp(returnValue = reactiveValuesToList(w_))
+    })
   }
-  shinyApp(server=server, ui=ui)
+  return(runApp(shinyApp(server=server, ui=ui)))
 }
 
 par(mfrow=c(1,1))
