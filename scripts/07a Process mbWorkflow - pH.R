@@ -1,13 +1,9 @@
-
 library(packrat)
 on()
+library(here)
 
 library(RMassBank)
 library(tidyverse)
-
-dir <- "C:/Daten/Michele/20190625 Karin MassBank-QE"
-setwd(dir)
-
 
 loadList("results/compoundsRmb.csv")
 loadRmbSettings("input/RmbSettings.ini")

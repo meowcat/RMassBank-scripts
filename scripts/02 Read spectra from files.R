@@ -1,15 +1,20 @@
+library(packrat)
+on()
+library(here)
 
 
 library(RMassBank)
 library(mzR)
 library(plyr)
 library(dplyr)
-dir <- "C:/Daten/Michele/20190625 Karin MassBank-QE/"
-setwd(dir)
-inputDir <- c("C:\\Daten\\Michele\\20190625 Karin MassBank-QE\\mzXML")
+# dir <- "C:/Daten/Michele/20190625 Karin MassBank-QE/"
+# setwd(dir)
+
+source("environment.R")
+
 inFiles <- list.files(inputDir, ".mzXML", full.names = T)
 
-compounds <- read.csv("input/SubstanzenKarin_Massbank.csv", sep=";")
+compounds <- read.csv(compoundsCsv, sep=";")
 
 checkFiles <- data.frame(files = inFiles, stringsAsFactors = FALSE)
 checkFiles <- checkFiles %>% mutate(basefiles = basename(files)) %>%

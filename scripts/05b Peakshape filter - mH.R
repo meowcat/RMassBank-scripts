@@ -1,3 +1,6 @@
+library(packrat)
+on()
+library(here)
 
 library(pROC)
 library(RMassBank)
@@ -6,8 +9,6 @@ library(gplots)
 library(S4Vectors)
 library(tidyverse)
 library(mzR)
-dir <- "C:/Daten/Michele/20190625 Karin MassBank-QE/"
-setwd(dir)
 
 par(mfrow=c(1,1))
 

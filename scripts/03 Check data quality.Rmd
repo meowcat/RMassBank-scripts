@@ -5,8 +5,8 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
-knitr::opts_knit$set(root.dir= "C:/Daten/Michele/20190625 Karin MassBank-QE/"
-)
+# knitr::opts_knit$set(root.dir= "C:/Daten/Michele/20190625 Karin MassBank-QE/"
+# )
 ```
 
 ## Summary for each cpd

@@ -1,4 +1,9 @@
-source(paste0(dir, "viewer.R"))
+library(packrat)
+on()
+library(here)
+
+
+source(here("viewer.R"))
 
 w <- loadMsmsWorkspace("results/spectra-mH-eics-score.RData")
 
