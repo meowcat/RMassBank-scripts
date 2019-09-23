@@ -35,7 +35,7 @@ loadRmbSettings("input/RmbSettings.ini")
 
 
 
-w <- loadMsmsWorkspace("results/spectra-pH-processed.RData")
+w <- loadMsmsWorkspace("results/spectra-mH-processed.RData")
 
 
 
@@ -49,7 +49,7 @@ w@spectra <- mapply(function(cpd, f) {
 precursorEps <- 0.1 # maximal m/z deviation of precursor
 rtWindow <- 15 # seconds per side
 ppmEic <- 5
-selectPolarity <- 1
+selectPolarity <- 0
 
 # extract all EICs for MS2 peaks
 w@spectra <- lapply(w@spectra, function(cpd) {
@@ -82,7 +82,7 @@ w@spectra <- lapply(w@spectra, function(cpd) {
   cpd
 }) %>% as("SimpleList")
 
-archiveResults(w, "results/spectra-pH-eics.RData")
+archiveResults(w, "results/spectra-mH-eics.RData")
 
 # Peak EIC correlation while filtering out zero rows
 .eicScoreCor <- function(prec, eic) {
@@ -297,4 +297,4 @@ abline(h=thresholdDot0, col="orange")
 attr(w, "eicScoreFilter") <- list("eicScoreCor" = thresholdCor,
                                  "eicScoreDot" = thresholdDot)
 
-archiveResults(w, "results/spectra-pH-eics-score.RData")
+archiveResults(w, "results/spectra-mH-eics-score.RData")
