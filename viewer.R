@@ -1,3 +1,4 @@
+library(tidyverse)
 library(shiny)
 library(plyr)
 library(RMassBank)
@@ -189,10 +190,11 @@ viewer <- function(w)
         lapply(cpd@children, function(sp) range(mz(sp)))
       ))
       peaks <- getData(cpd@children[[spectrum]])
+      peaks$mzPrecursor <- rep(cpd@mz, nrow(peaks))
       output$peaksTable <- renderDataTable({
         peaks %>%
           datatable() %>%
-          formatRound(c("mz", "mzRaw", "mzCenter", "mzCalc"), digits = 4) %>%
+          formatRound(c("mz", "mzRaw", "mzCalc", "mzPrecursor"), digits = 4) %>%
           formatRound(c("dppm", "dppmBest", "eicScoreCor", "eicScoreDot"), digits = 2) %>%
           formatSignif("intensity", 2) })
       output$spectrumPlot <- renderPlot({
