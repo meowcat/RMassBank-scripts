@@ -2,18 +2,28 @@ library(here)
 
 library(RMassBank)
 library(tidyverse)
+library(glue)
+
+RMassBank.env$export.molfiles <- FALSE
+
 
 loadList("results/compoundsRmb.csv")
 loadRmbSettings("input/RmbSettings.ini")
 
+fs::dir_create("results/records")
+fs::dir_delete("results/records")
+fs::dir_create("results/records")
 
-load("results/records_pH.RData")
-mb <- resetInfolists(mb)
-mb <- loadInfolist(mb, "infolist_checked.csv")
-mb <- mbWorkflow(mb, filter = FALSE)
-
-
-load("results/records_mH.RData")
-mb <- resetInfolists(mb)
-mb <- loadInfolist(mb, "infolist_checked.csv")
-mb <- mbWorkflow(mb, filter = FALSE)
+charge_strs <- c("mH", "pH")
+walk(charge_strs, function(charge_str) {
+  
+  load(glue("results/records_{charge_str}.RData"))
+  mb <- resetInfolists(mb)
+  mb <- loadInfolists(mb, "infolists")
+  
+  wd <- getwd()
+  setwd("results/records")
+  mb <- mbWorkflow(mb)
+  setwd(wd)
+  
+})
