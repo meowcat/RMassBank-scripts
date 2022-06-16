@@ -1,7 +1,7 @@
 library(here)
 
 source("environment.R")
-
+source("functions.R")
 library(pROC)
 library(RMassBank)
 library(reshape2)
@@ -36,8 +36,17 @@ loadRmbSettings("input/RmbSettings.ini")
 
 
 
-w <- loadMsmsWorkspace("results/spectra-pH-processed.RData")
 
+
+
+
+
+charge_strs <- c("pH", "mH")
+
+walk(charge_strs, function(charge_str) {
+  
+  w <- loadMsmsWorkspace(
+    glue("results-{charge_str}-processed.RData"))
 
 
 
@@ -51,6 +60,7 @@ precursorEps <- 0.1 # maximal m/z deviation of precursor
 rtWindow <- 15 # seconds per side
 ppmEic <- 5
 selectPolarity <- 1
+ppmGood <- 15
 
 # extract all EICs for MS2 peaks
 w@spectra <- lapply(w@spectra, function(cpd) {
@@ -59,6 +69,22 @@ w@spectra <- lapply(w@spectra, function(cpd) {
   d <- openMSfile(f)
   h <- header(d)
   p <- makePeaksCache(d, h)
+  
+  # 1.6.22: For Exploris data, we need to fill precursor here.
+  headerData <- h
+  headerData$precursorScanNum <- NA
+  headerData[which(headerData$msLevel == 1),"precursorScanNum"] <-
+    headerData[which(headerData$msLevel == 1),"acquisitionNum"]
+  headerData[,"precursorScanNum"] <- RMassBank:::.locf(headerData[,"precursorScanNum"])
+  # Clear the actual MS1 precursor scan number again
+  headerData[which(headerData$msLevel == 1),"precursorScanNum"] <- 0
+  # Remove precursors which are still NA in precursor scan num.
+  # This removes a bug when filling precursor if the first scan(s) are MS2 before a
+  # MS1 scan appears. The resulting NA values in precursorScanNum are problematic downstream.
+  headerData <- headerData[!is.na(headerData$precursorScanNum),]
+  h <- headerData
+  
+  
   if(length(cpd@children) == 0)
     return(cpd)
   cpd@children <- lapply(cpd@children, function(sp) {
@@ -70,7 +96,7 @@ w@spectra <- lapply(w@spectra, function(cpd) {
       collisionEnergy == sp@collisionEnergy
     )
     hSub$msLevel <- 1
-    pSub <- p[hSub$acquisitionNum]
+      pSub <- p[hSub$seqNum]
     eics <- lapply(property(sp, "mzRaw"), function(mz) {
       eic <- findEIC(d, mz, ppm(mz, ppmEic, p = TRUE), headerCache = hSub, peaksCache = pSub)
       eic$precursorScan <- hSub$precursorScanNum
@@ -83,26 +109,10 @@ w@spectra <- lapply(w@spectra, function(cpd) {
   cpd
 }) %>% as("SimpleList")
 
-archiveResults(w, "results/spectra-pH-eics.RData")
-
-# Peak EIC correlation while filtering out zero rows
-.eicScoreCor <- function(prec, eic) {
-  eicSum <- colSums(abs(eic))
-  .eicScore <- cor(prec, eic[,eicSum > 0,drop=FALSE])
-  eicScore <- rep(NA_real_, ncol(eic))
-  eicScore[eicSum > 0] <- .eicScore
-  eicScore
-} 
-
-# Peak EIC dot product score
-.eicScoreDot <- function(prec, eic) {
-  normX <- sqrt(sum(prec^2))
-  normY <- sqrt(colSums(eic^2))
-  dot <- t(prec) %*% eic
-  score <- dot / (normX * normY)
-  score[normY == 0] <- NA
-  score
-}
+  archiveResults(
+    w, 
+    glue("results/spectra-{charge_str}-eics.RData")
+  )
 
 
 # correlate EICs with precursor EIC
@@ -110,23 +120,25 @@ archiveResults(w, "results/spectra-pH-eics.RData")
 w@spectra <- lapply(w@spectra, function(cpd) {
   if(length(cpd@children) == 0)
     return(cpd)
+    message(cpd@name)
+    
   cpd@children <- lapply(cpd@children, function(sp) {
     eic <- attr(sp, "eic") %>%
       bind_rows(.id = "mzIndex") %>%
-      acast(precursorScan ~ as.numeric(as.character(mzIndex)), value.var = "intensity",
-            drop = FALSE)
-    eicPrecursor <- attr(cpd, "eic") %>% 
-      filter(scan %in% rownames(eic)) %>%
-      acast(scan ~ 1, value.var = "intensity")
-    # assert that the rows match
-    if(!all(rownames(eic) == rownames(eicPrecursor)))
-      stop("EIC correlations: the scan index of precursor and spectrum EIC doesn't match!")
-    # remove actual scan and precursor
-    # don't run columns that have zero intensity outside of the self-point,
-    # and replace with NA
-    thisScan <- which(rownames(eic) == as.character(sp@precScanNum))
-    eic <- eic[-thisScan,,drop=FALSE]
-    eicPrecursor <- eicPrecursor[-thisScan,,drop=FALSE]
+        mutate(mzIndex = as.numeric(as.character(mzIndex))) %>%
+        pivot_wider(names_from = c("mzIndex"), values_from = "intensity", names_prefix = "mz_")
+      
+      eicPrecursor <- attr(cpd, "eic")
+      eic <- eic %>% left_join(eicPrecursor %>% dplyr::rename(precursorScan = scan),
+                               by="precursorScan")
+      
+      
+      # filter out "this scan"
+      eic <- eic %>% dplyr::filter(precursorScan != sp@precScanNum)
+      
+      eicPrecursor <- eic[,"intensity"] %>% as.matrix()
+      eic <- eic %>% dplyr::select(starts_with("mz_")) %>% as.matrix()
+      
     eicScoreCor <- .eicScoreCor(eicPrecursor, eic)
     eicScoreDot <- .eicScoreDot(eicPrecursor, eic)
     
@@ -149,6 +161,10 @@ w@spectra <- lapply(w@spectra, function(cpd) {
 # aggregate and keep the best result for every peak
 ag <- aggregateSpectra(w)
 ag <- ag %>% 
+    group_by(cpdID, scan) %>%
+    # dplyr::mutate(maxint = max(intensity), relint = intensity / max(intensity)) %>%
+    # filter(relint > 0.2) %>%
+    dplyr::mutate(good = abs(dppm) < ppmGood) %>%
   dplyr::group_by(cpdID, scan, mzFound) %>% 
   dplyr::arrange(!good, abs(dppm)) %>% 
   dplyr::slice(1)
@@ -178,10 +194,6 @@ ag$formula_[is.na(ag$formula_)] <- -seq_along(ag$formula_[is.na(ag$formula_)])
 ag$eicScoreCor0 <- ag$eicScoreCor %>% replace_na(0)
 ag$eicScoreDot0 <- ag$eicScoreDot %>% replace_na(0)
 
-f1 <- function(sens, spec)
-  2 * sens * spec / (sens + spec)
-fBeta <- function(beta) function(sens, spec)
-  (1 + beta^2) * (sens * spec) / ((spec * beta^2) + sens)
   
 #fsc <- f1
 fsc <- fBeta(1.5)
@@ -196,14 +208,14 @@ thresholdCor <- setpoint$thresholds[maxFscore]
 setpoint <- roc(good ~ eicScoreDot, data=ag, levels=c("FALSE", "TRUE"), direction="<")
 plot(setpoint)
 fscore <- fsc(setpoint$sensitivities, setpoint$specificities)
-plot(fscore)
+  plot(setpoint$thresholds, fscore)
 maxFscore <- which.max(fscore)
 thresholdDot <- setpoint$thresholds[maxFscore]
 
 setpoint <- roc(good ~ eicScoreCor0, data=ag, levels=c("FALSE", "TRUE"), direction="<")
 plot(setpoint)
 fscore <- fsc(setpoint$sensitivities, setpoint$specificities)
-plot(fscore)
+  plot(setpoint$thresholds, fscore)
 maxFscore <- which.max(fscore)
 thresholdCor0 <- setpoint$thresholds[maxFscore]
 
@@ -211,7 +223,7 @@ thresholdCor0 <- setpoint$thresholds[maxFscore]
 setpoint <- roc(good ~ eicScoreDot0, data=ag, levels=c("FALSE", "TRUE"), direction="<")
 plot(setpoint)
 fscore <- fsc(setpoint$sensitivities, setpoint$specificities)
-plot(fscore)
+  plot(setpoint$thresholds, fscore)
 maxFscore <- which.max(fscore)
 thresholdDot0 <- setpoint$thresholds[maxFscore]
 
@@ -298,4 +310,8 @@ abline(h=thresholdDot0, col="orange")
 attr(w, "eicScoreFilter") <- list("eicScoreCor" = thresholdCor,
                                  "eicScoreDot" = thresholdDot)
 
-archiveResults(w, "results/spectra-pH-eics-score.RData")
+  archiveResults(
+    w, 
+    glue("results/spectra-{charge_str}-eics-score.RData")
+  )
+  })
