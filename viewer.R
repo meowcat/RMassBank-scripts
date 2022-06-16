@@ -3,32 +3,50 @@ library(shiny)
 library(plyr)
 library(RMassBank)
 library(MSnbase)
+library(shinydust)
+library(rhandsontable)
+library(glue)
+library(fs)
+# library(keys)
+# source(here("viewer-include.R"))
 
-source("viewer-include.R")
+metric_set <- "eicScoreCor"
 
+debug <- FALSE
+debug_message <- function(...) {
+  if(debug)
+    message(...)
+}
 
-
-viewer <- function(w)
+viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
 {
   if(is.list(w)) {
     w_ <- reactiveValues(
       w = w$w,
       specOk = w$specOk,
-      cpdOk = w$cpdOk 
+      cpdOk = w$cpdOk,
+      cpd = 1,
+      spec = 1,
+      score_cutoff = ifelse(!is.null(w$score_cutoff), w$score_cutoff, attr(w$w, "eicScoreFilter")[[metric_set]])
     )
   } else {
   w_ <- reactiveValues(w=w,
-                       specOk = lapply(
+                       specOk = cmap(
                          w@spectra, function(cpd)
-                           unlist(lapply(cpd@children, function(sp)
-                             sp@ok))
-                       ),
+                           cmap_lgl(cpd@children, function(sp)
+                             sp@ok)),
                        cpdOk = unlist(lapply(
                          w@spectra, function(cpd)
                            cpd@found
-                       ))
-                       )}
-  ui <- fixedPage(
+                       )),
+                       cpd = 1,
+                       spec = 1,
+                       score_cutoff = attr(w, "eicScoreFilter")[[metric_set]]
+  )}
+  
+  hotkeys <- c("+", "-", ".")
+  
+  ui <- fluidPage(
     tags$style("
       .checkbox { /* checkbox is a div class*/
         line-height: 50%;
@@ -41,12 +59,16 @@ viewer <- function(w)
       "),
     sidebarLayout(
       sidebarPanel(
-        fixedRow(dataTableOutput("compound")), #, "Compound:" ,names(w@spectra), size=20, selectize=FALSE)
-        fixedRow(dataTableOutput("spectrum")),
+        width = 4,
+        fixedRow(rHandsontableOutput("compound", height = "400px") ), #, "Compound:" ,names(w@spectra), size=20, selectize=FALSE)
+        fixedRow(rHandsontableOutput("spectrum")),
         fixedRow(actionButton("quit", "Quit")),
-        fixedRow(actionButton("reset", "Reset"))
+        fixedRow(actionButton("reset", "Reset")),
+        fixedRow(actionButton("backup", "Backup")),
+        fixedRow(actionButton("restore", "Restore"))
       ),
       mainPanel(
+        width = 8,
         # first row: select cpd and MS
 
         tabsetPanel(
@@ -57,7 +79,7 @@ viewer <- function(w)
                    # second row: display MS
                    fixedRow(
                      column(7, plotOutput("spectrumPlot")),
-                     column(5, plotOutput("eicCorPlot"))
+                     column(5, plotOutput("eicCorPlot", click = "eicCorPlot_click"))
                    ),
                    # third row: display peak table
                    fixedRow(
@@ -73,99 +95,186 @@ viewer <- function(w)
           
         )
       )
-    )
+    ),
+    # useKeys(),
+    # keysInput("keys", hotkeys),
   )
   server <- function(input, output, session)
   {
+    
+    
+    
     #output$ms2table <- 
     compound <- reactive({
-      names(w_$w@spectra)[input$compound_rows_selected]
+      names(w_$w@spectra)[compoundIndex()]
     })
     
     compoundIndex <- reactive({
-      input$compound_rows_selected
+      #input$compound_select$select$r
+      debug_message(w_$cpd)
+      w_$cpd
     })
     
-    output$compound <-  DT::renderDataTable({
-      data.frame(ok = shinyInput(checkboxInput, length(w_$w@spectra), "cpd_selected", 
-                                 value=isolate({w_$cpdOk})),
-                 name = names(w_$w@spectra)) %>%
-        datatable(selection = "single", filter="none",
-                  class="compact",
-                  options = list("dom" = "t", scrollY=350, paging=FALSE,
-                                 "preDrawCallback" = .preDrawCallback,
-                                 "drawCallback" = .drawCallback),
-                  escape = FALSE,
-                  rownames = FALSE) %>%
-        DT::formatStyle(columns = c(1,2), fontSize = '75%')
-        
+    observeEvent(input$compound_select, {
+      r <- input$compound_select$select$r
+      if((r != w_$cpd) & (length(r) == 1))
+        w_$cpd <- r
     })
+    
+    observeEvent(input$eicCorPlot_click, {
+      w_$score_cutoff <- input$eicCorPlot_click$y
+    })
+    
+    # observeEvent(input$keys, {
+    #   message(input$keys)
+    #   actions <- list(
+    #     "+" = function() w_$cpd <- min(w_$cpd + 1, length(w_$w@spectra)),
+    #     "-" = function() w_$cpd <- max(w_$cpd - 1, 1),
+    #     "." = function() w_$cpdOk[[w_$cpd]] <- !(w_$cpdOk[[w_$cpd]])
+    #   )
+    #   if(input$keys %in% names(actions))
+    #     actions[[input$keys]]()
+    # })
+    
+    
+    output$compound <- renderRHandsontable({
+      specNames <- names(w_$w@spectra)
+      specModes <- cmap_chr(w_$w@spectra, ~.x@mode)
+      adductTable <- RMassBank:::getAdductInformation("")
+      specAdducts <- adductTable[match(specModes, adductTable$mode), "adductString"]
+      countOK <- cmap_int(w_$w@spectra, function(cpd) {
+        sum(cmap_lgl(cpd@children, ~ .x@ok))
+      })
+      debug_message(glue("{length(specNames)} cpds, {length(w_$cpdOk)} list of cpds"))
+      # message(length(specNames))
+      countTot <- cmap_int(w_$w@spectra, ~ length(.x@children))
+      df <- tibble(
+        ok = w_$cpdOk,
+        #ok = rep(TRUE, length(specNames)),
+        name = specNames,
+        adduct = specAdducts,
+        num_ok = as.character(glue("{countOK}/{countTot}")))
+      rhandsontable(df, 
+                    selectCallback = TRUE, 
+                    rowHeaders = NULL,
+                    rowhighlight = 7) %>%
+        hot_rows(rowHeights = 15) %>%
+        # hot_cols(renderer = "
+        # function(instance, td, row, col, prop, value, cellProperties) {
+        #       Handsontable.renderers.TextRenderer.apply(this, arguments);
+        #       tbl = this.HTMLWidgets.widgets[0];
+        # 
+        #       hrows = tbl.params.rowhighlight;
+        #       hrows = hrows instanceof Array ? hrows : [hrows];
+        #       if (hrows.includes(row)) {
+        #         td.style.background = 'pink';
+        #       }
+        #       return td;
+        # }
+        #          ") %>%
+        hot_col(col = "ok", type = "checkbox") %>%
+        hot_col(col = "name", readOnly = TRUE) %>%
+        hot_col(col = "adduct", readOnly = TRUE) %>%
+        hot_col(col = "num_ok", readOnly = TRUE) %>%
+        hot_table(highlightRow = TRUE)
+    })
+    
+    
+    # output$compound <-  DT::renderDataTable({
+    #   specNames <- names(w_$w@spectra)
+    #   specModes <- map_chr(w_$w@spectra %>% as.list(), ~.x@mode)
+    #   adductTable <- RMassBank:::getAdductInformation("")
+    #   specAdducts <- adductTable[match(specModes, adductTable$mode), "adductString"]
+    #   data.frame(ok = shinyInput(checkboxInput, length(w_$w@spectra), "cpd_selected", 
+    #                              value=isolate({w_$cpdOk})),
+    #              name = glue("{specNames} {specAdducts}")) %>%
+    #     datatable(selection = "single", filter="none",
+    #               class="compact",
+    #               options = list("dom" = "t", scrollY=350, paging=FALSE,
+    #                              "preDrawCallback" = .preDrawCallback,
+    #                              "drawCallback" = .drawCallback),
+    #               escape = FALSE,
+    #               rownames = FALSE) %>%
+    #     DT::formatStyle(columns = c(1,2), fontSize = '75%')
+    #     
+    # })
     
     spectrum <- reactive({
-      input$spectrum_rows_selected
+      sel <- input$spectrum_select
+      return(sel$select$r)
     })
     
-    output$spectrum <-  DT::renderDataTable({
-      cpd <- as.character(compound())
+    output$spectrum <- renderRHandsontable({
+      cpd <- compoundIndex()
       if(length(cpd) == 0)
         return()
-      if(cpd %in% names(w_$w@spectra))
+      if(between(cpd, 1, length(w_$w@spectra)))
       {
-        return(data.frame(
-          ok = shinyInput(checkboxInput, length(w_$w@spectra[[cpd]]@children),
-                          paste0("spec_", compoundIndex(), "_selected"), 
-                          isolate({w_$specOk[[compoundIndex()]]})),
-          id = seq_along(w_$w@spectra[[cpd]]@children)
-        ) %>%
-                 datatable(selection = "single", filter="none",
-                           class="compact", extensions = "KeyTable",
-                           options = list(
-                             "dom" = "tp", keys = TRUE,
-                             "preDrawCallback" = .preDrawCallback,
-                             "drawCallback" = .drawCallback),
-                           escape = FALSE,
-                           rownames = FALSE) %>%
-          DT::formatStyle(columns = c(1,2), fontSize = '75%'))
+        isolate({
+        debug_message(str(cpd))
+        debug_message(glue("{w_$specOk[[cpd]]} "))
+        df <- data.frame(
+          ok = isolate({w_$specOk[[cpd]]}),
+          id = seq_along(w_$w@spectra[[cpd]]@children),
+          int = w_$w@spectra[[cpd]]@children %>% as.list() %>% map_dbl(~ getData(.x) %>% pull(intensity) %>% max()) %>% format(scientific = T, digits = 2)
+        )
+        rhandsontable(df, selectCallback = TRUE) %>%
+          hot_col(col = "ok", type = "checkbox") %>%
+          hot_col(col = "id", readOnly = TRUE) %>%
+          hot_col(col = "int", readOnly = TRUE) %>%
+          hot_table(highlightRow = TRUE)
+        })
       }
+        
+      #   
+      #   %>%
+      #     datatable(selection = "single", filter="none",
+      #               class="compact", extensions = "KeyTable",
+      #               options = list(
+      #                 "dom" = "tp", keys = TRUE,
+      #                 "preDrawCallback" = .preDrawCallback,
+      #                 "drawCallback" = .drawCallback),
+      #               escape = FALSE,
+      #               rownames = FALSE) %>%
+      #     DT::formatStyle(columns = c(1,2), fontSize = '75%'))
+      # }
     })
     
+    
+    
     observe({
-      cpd <- compound()
-      spectrum <- spectrum()
-      idx <- compoundIndex()
-      if(length(cpd) == 0)
-        return()
-      if(length(spectrum) == 0)
-        return()
-      if(length(idx) == 0)
-        return()
-      
-      nspec <- length(w_$w@spectra[[cpd]]@children)
-      specSelected <- shinyValue(input,
-                                 paste0("spec_", compoundIndex(), "_selected"),
-                                 nspec)
-      if(!any(is.na(specSelected))) {
-        specOk <- w_$specOk
-        specOk[[compoundIndex()]] <- specSelected
-        w_$specOk  <- specOk
-      }
+      #
+      df <- hot_to_r(input$spectrum)
+      isolate({
+        idx <- compoundIndex()  
+        debug_message(glue("setting {idx}, old: {w_$specOk[[idx]]}, new: {df$ok} \n"))
+        if(is.null(df$ok))
+          debug_message("{w_$specOk[[idx]]} would be NULLed - we skip this")
+        else(
+          if(length(idx) > 0)
+            w_$specOk[[idx]] <- df$ok  
+        )
       })
-    
-    observe({
-      cpd <- compound()
-      idx <- compoundIndex()
-      if(length(cpd) == 0)
-        return()
-      if(length(idx) == 0)
-        return()
       
-      ncpd <- length(w_$w@spectra)
-      cpdSelected <- shinyValue(input,
-                                 paste0("cpd_selected"),
-                                 ncpd)
-      w_$cpdOk <- cpdSelected
     })
-      
+
+    observe({
+      #out <<- input$compound
+      df <- hot_to_r(input$compound)
+      isolate({
+        # cpd <- compound()
+        # idx <- compoundIndex()
+        # if(length(cpd) == 0)
+        #   return()
+        # if(length(idx) == 0)
+        #   return()
+        if(length(df$ok) == length(w_$cpdOk))
+          w_$cpdOk <- df$ok
+        else
+          debug_message("incorrect length of cpdOK - not setting (yet?)")
+      })
+    })
+
     
     observe({
       cpd <- compound()
@@ -173,16 +282,16 @@ viewer <- function(w)
     })
     
     observe({
-      cpd <- compound()
+      cpdName <- compound()
       spectrum <- spectrum()
-      if(length(cpd) == 0)
+      if(length(cpdName) == 0)
         return()
       if(length(spectrum) == 0)
         return()
       
-      if(!(cpd %in% names(w_$w@spectra)))
+      if(!(cpdName %in% names(w_$w@spectra)))
         return()
-      cpd <- w_$w@spectra[[cpd]]
+      cpd <- w_$w@spectra[[cpdName]]
       if(!(spectrum <= length(cpd@children)))
         return()
       # get the complete peak table to find the total range
@@ -191,17 +300,31 @@ viewer <- function(w)
       ))
       peaks <- getData(cpd@children[[spectrum]])
       peaks$mzPrecursor <- rep(cpd@mz, nrow(peaks))
+      if(!("filterOK" %in% colnames(peaks)))
+        peaks$filterOK <- rep(FALSE, nrow(peaks))
+      if(!("formulaSource" %in% colnames(peaks)))
+        peaks$formulaSource <- rep("", nrow(peaks))
+      if(!("bestMultiplicity" %in% colnames(peaks)))
+          peaks$bestMultiplicity <- rep(0, nrow(peaks))
+
       output$peaksTable <- renderDataTable({
         peaks %>%
+          mutate(flag = glue(
+            '{if_else(noise, "noise", "")}{if_else(low, "low ","")}{if_else(satellite, "sat ", "")}{if_else(good, "good ","")}{if_else(filterOK, "filter+", "")}')) %>%
+          select(-low, -satellite, -good, -rawOK, -formulaSource, -dppmBest, -bestMultiplicity, -filterOK, -noise) %>%
+          dplyr::rename(cor = eicScoreCor, dot = eicScoreDot, int = intensity, `#mf` = formulaCount, `#spec` = formulaMultiplicity) %>%
+          dplyr::relocate(flag, .before = formula) %>%
+          dplyr::relocate(cor, .after = dppm) %>%
+          dplyr::relocate(mzRaw, .before = mzPrecursor) %>%
           datatable() %>%
           formatRound(c("mz", "mzRaw", "mzCalc", "mzPrecursor"), digits = 4) %>%
-          formatRound(c("dppm", "dppmBest", "eicScoreCor", "eicScoreDot"), digits = 2) %>%
-          formatSignif("intensity", 2) })
+          formatRound(c("dppm", "cor", "dot"), digits = 2) %>%
+          formatSignif("int", 2) })
       output$spectrumPlot <- renderPlot({
-        plotSpectrum(peaks, mzRange=mzRange, w=w_$w)
-        spectrumLegend(cpd, cpd@children[[spectrum]])
+        plotSpectrum(peaks, mzRange=mzRange, score_cutoff = w_$score_cutoff, metric = metric_set)
+        spectrumLegend(cpd, cpd@children[[spectrum]], cpdName)
         })
-      output$eicCorPlot <- renderPlot(plotEicCor(w_$w, cpd, spectrum))
+      output$eicCorPlot <- renderPlot(plotEicCor(w_$score_cutoff, cpd, spectrum, metric = metric_set))
       #output$peaksXyPlot <- renderPlot(xyplot(cpd, spectrum))
     })
     
@@ -210,6 +333,10 @@ viewer <- function(w)
     })
     
     observeEvent(input$reset, {
+      debug_message("reset")
+      if(is.null(input$reset))
+        return()
+      debug_message("reset executed")
       w_$specOk <- lapply(w_$w@spectra, function(cpd)
                                unlist(lapply(cpd@children, function(sp)
                                  sp@ok)))
@@ -219,19 +346,45 @@ viewer <- function(w)
                            ))
       })
     
+    
+    observeEvent(input$backup, {
+      if(is.null(input$backup))
+        return()
+      e <- new.env()
+      e$specOk <- w_$specOk
+      e$cpdOk <- w_$cpdOk
+      e$score_cutoff <- w_$score_cutoff
+      save(list = c("specOk", "cpdOk", "score_cutoff"), envir = e, file=backupPath)
+      showNotification("Backup complete")
+    })
+    
+    
+    
+    observeEvent(input$restore, {
+      if(is.null(input$restore))
+        return()
+      e <- new.env()
+      load(backupPath, envir = e)
+      w_$specOk <- e$specOk
+      w_$cpdOk <- e$cpdOk
+      if(!is.null(e$score_cutoff))
+        w_$score_cutoff <- e$score_cutoff
+      showNotification("Restore complete")
+    })
+    
   }
   return(runApp(shinyApp(server=server, ui=ui)))
 }
 
 par(mfrow=c(1,1))
-plotSpectrum <- function(peaks, mzRange=NA, w, metric = "eicScoreCor")
+plotSpectrum <- function(peaks, mzRange=NA, score_cutoff, metric = metric_set)
 {
   xlim <- range(peaks$mz, mzRange, na.rm = TRUE)
   maxint <- max(peaks$intensity, na.rm=TRUE)
   # select only the best peak
   peaks <- peaks %>% group_by(mz) %>% arrange(!good, abs(dppm)) %>% slice(1)
   peaks$intrel <- peaks$intensity/maxint*100
-  peaks$corOk <- peaks[,metric] > attr(w, "eicScoreFilter")[[metric]]
+  peaks$corOk <- peaks[,metric] > score_cutoff
   par(mar=c(3,2,1,1)+0.1)
   plot.new()
   plot.window(xlim=xlim+c(-5,5), ylim=c(-10,120))
@@ -242,12 +395,12 @@ plotSpectrum <- function(peaks, mzRange=NA, w, metric = "eicScoreCor")
   points(intrel ~ mz, data=peaks[peaks$good,,drop=FALSE],
          type='h', lwd=2, col="red")
   points(intrel ~ mz, data=peaks[peaks$corOk & peaks$good,,drop=FALSE],
-         type='h', lwd=2, col="darkgreen")
+         type='h', lwd=2, col="blue")
   points(intrel ~ mz, data=peaks[peaks$corOk & !peaks$good,,drop=FALSE],
          type='h', lwd=2, col="green")
 }
 
-plotEicCor <- function(w, cpd, spectrum, metric = "eicScoreCor") {
+plotEicCor <- function(score_cutoff, cpd, spectrum, metric = metric_set) {
   cor <- property(cpd@children[[spectrum]], metric)
   if(is.null(cor))
     plot.new()
@@ -258,6 +411,7 @@ plotEicCor <- function(w, cpd, spectrum, metric = "eicScoreCor") {
     d <- d[!duplicated(d$mz),,drop=FALSE]
     par(mar=c(3,2,1,1)+0.1)
     d$metric <- d[,metric] %>% replace_na(0)
+    d$good <- if_else(d$good, "MF found", "no MF") %>% factor(levels = c("no MF", "MF found"))
     #boxplot(metric ~ good, data = d)
     bp <- boxplot(metric ~ good, data=d, horizontal=F, outline=FALSE)
     points(jitter(match(d$good, bp$names)), d$metric)
@@ -269,7 +423,8 @@ plotEicCor <- function(w, cpd, spectrum, metric = "eicScoreCor") {
     #        pch=19)
     #         
     
-    abline(h=attr(w, "eicScoreFilter")[[metric]], col="red")
+    abline(h=score_cutoff, col="red")
+    title(ylab = "correlation")
   }
 }
 
@@ -287,9 +442,9 @@ plotEic <- function(cpd)
 
 
 
-spectrumLegend <- function(cpd, sp)
+spectrumLegend <- function(cpd, sp, cpdName)
 {
-  leg <- c("name" = cpd@name,
+  leg <- c("name" = glue("{cpd@name} ({cpdName})"),
     "precursor" = paste0(sp@precursorMz, " (", cpd@mz, ")"),
     "int" = format(max(intensity(sp)),scientific = TRUE, digits=1),
     "ce" = collisionEnergy(sp)
