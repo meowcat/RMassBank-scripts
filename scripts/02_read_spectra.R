@@ -11,21 +11,21 @@ library(dplyr)
 
 source("environment.R")
 
-inFiles <- list.files(inputDir, ".mzXML", full.names = T)
+inFiles <- list.files(inputDir, ".mzML", full.names = T)
 
-compounds <- read.csv(compoundsCsv, sep=";")
+compounds <- read.csv(compoundsCsv, sep=",")
 
 checkFiles <- data.frame(files = inFiles, stringsAsFactors = FALSE)
 checkFiles <- checkFiles %>% mutate(basefiles = basename(files)) %>%
   mutate(id = strsplit(basefiles, '[_.]') %>% lapply(`[`, 3) %>% as.integer)
 
-compounds$found <- compounds$ID.Eawag %in% checkFiles$id
+compounds$found <- compounds$ID %in% checkFiles$id
 
 
 
 compoundsRmb <- compounds[compounds$found,
-                          c("ID.Eawag", "Compound", "SMILES")]
-compoundsRmb$RT <- ""
+                          c("ID", "Compound", "SMILES", "RT")]
+#compoundsRmb$RT <- ""
 compoundsRmb$CAS <- ""
 colnames(compoundsRmb) <- c("ID", "Name", "SMILES", "RT", "CAS")
 write.csv(compoundsRmb, file="results/compoundsRmb.csv")
@@ -33,9 +33,9 @@ write.csv(compoundsRmb, file="results/compoundsRmb.csv")
 loadList("results/compoundsRmb.csv")
 loadRmbSettings("input/RmbSettings.ini")
 
-compounds <- merge(compounds, checkFiles, by.x='ID.Eawag', by.y='id', all.x = TRUE)
+compounds <- merge(compounds, checkFiles, by.x='ID', by.y='id', all.x = TRUE)
 
-compoundsMsRead <- compounds[compounds$found,c("ID.Eawag", "files")]
+compoundsMsRead <- compounds[compounds$found,c("ID", "files")]
 #compoundsMsRead$file <- paste(inputDir, compoundsMsRead$file, sep="/")
 colnames(compoundsMsRead) <- c("ID", "Files")
 write.csv(compoundsMsRead, file="results/compoundsMsR.csv")
