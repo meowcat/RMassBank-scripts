@@ -9,6 +9,7 @@ library(gplots)
 library(S4Vectors)
 library(tidyverse)
 library(mzR)
+library(glue)
 
 par(mfrow=c(1,1))
 
@@ -46,7 +47,7 @@ charge_strs <- c("pH", "mH")
 walk(charge_strs, function(charge_str) {
   
   w <- loadMsmsWorkspace(
-    glue("results-{charge_str}-processed.RData"))
+    glue("results/spectra-{charge_str}-processed.RData"))
 
 
 
@@ -59,11 +60,13 @@ w@spectra <- mapply(function(cpd, f) {
 precursorEps <- 0.1 # maximal m/z deviation of precursor
 rtWindow <- 15 # seconds per side
 ppmEic <- 5
-selectPolarity <- 1
-ppmGood <- 15
+#ppmGood <- 15
 
 # extract all EICs for MS2 peaks
 w@spectra <- lapply(w@spectra, function(cpd) {
+  
+  selectPolarity <- RMassBank:::getAdductPolarity(charge_str)
+  
   f <- attr(cpd, "file")
   message(f)
   d <- openMSfile(f)
@@ -161,10 +164,10 @@ w@spectra <- lapply(w@spectra, function(cpd) {
 # aggregate and keep the best result for every peak
 ag <- aggregateSpectra(w)
 ag <- ag %>% 
-    group_by(cpdID, scan) %>%
-    # dplyr::mutate(maxint = max(intensity), relint = intensity / max(intensity)) %>%
-    # filter(relint > 0.2) %>%
-    dplyr::mutate(good = abs(dppm) < ppmGood) %>%
+    # group_by(cpdID, scan) %>%
+    # # dplyr::mutate(maxint = max(intensity), relint = intensity / max(intensity)) %>%
+    # # filter(relint > 0.2) %>%
+    # dplyr::mutate(good = abs(dppm) < ppmGood) %>%
   dplyr::group_by(cpdID, scan, mzFound) %>% 
   dplyr::arrange(!good, abs(dppm)) %>% 
   dplyr::slice(1)

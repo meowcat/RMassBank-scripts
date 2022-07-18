@@ -3,6 +3,8 @@ library(here)
 library(RMassBank)
 library(tidyverse)
 library(glue)
+library(fs)
+library(assertthat)
 
 source(here("functions.R"))
 
@@ -15,16 +17,30 @@ infolists <- c()
 
 charge_strs <- c("pH", "mH")
 
+
+walk(charge_strs, function(charge_str) {
+  assert_that(fs::file_exists(glue("results/review_{charge_str}_score_cutoff.csv")),
+              msg = glue("You have not yet reviewed {charge_str} data")
+  )
+  assert_that(fs::file_exists(glue("results/review_{charge_str}_cpd_ok.csv")),
+              msg = glue("You have not yet reviewed {charge_str} data")
+  )
+  assert_that(fs::file_exists(glue("results/review_{charge_str}_spec_ok.csv")),
+              msg = glue("You have not yet reviewed {charge_str} data")
+  )
+})
+
+
 walk(charge_strs, function(charge_str) {
   
   
-  cpdOk <- read_csv(glue("input/review_{charge_str}_cpd_ok.csv")) %>% pull(ok)
-  specOk <- read_csv(glue("input/review_{charge_str}_spec_ok.csv")) %>%
+  cpdOk <- read_csv(glue("results/review_{charge_str}_cpd_ok.csv")) %>% pull(ok)
+  specOk <- read_csv(glue("results/review_{charge_str}_spec_ok.csv")) %>%
     group_by(cpd) %>%
     group_split() %>%
     map(~.x$ok)
   
-  cutoff_file <- glue("input/review_{charge_str}_score_cutoff.csv")
+  cutoff_file <- glue("results/review_{charge_str}_score_cutoff.csv")
   if(fs::file_exists(cutoff_file))
     score_cutoff <- read_file(cutoff_file) %>% as.numeric()
   else
