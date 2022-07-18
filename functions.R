@@ -1,4 +1,4 @@
-
+library(glue)
 # Peak EIC correlation while filtering out zero rows
 .eicScoreCor <- function(prec, eic) {
   eicSum <- colSums(abs(eic))
@@ -61,7 +61,10 @@ cmap_dfr <- function(x, ...) {
 
 smap <- function(x, ...) {
   x %>% as.list() %>% map(function(xx) {
-    xx@children <- xx@children %>% cmap(...)
+    if(length(xx@children) > 0)
+      xx@children <- xx@children %>% cmap(...)
+    else
+      warning(glue("{xx@name}: smap performed on zero spectra"))
     xx
   }) %>% as("SimpleList")
 }

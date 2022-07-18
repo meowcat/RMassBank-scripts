@@ -7,8 +7,9 @@ library(shinydust)
 library(rhandsontable)
 library(glue)
 library(fs)
+library(DT)
 # library(keys)
-# source(here("viewer-include.R"))
+source("viewer-include.R")
 
 metric_set <- "eicScoreCor"
 
@@ -17,6 +18,22 @@ debug_message <- function(...) {
   if(debug)
     message(...)
 }
+
+charge_str_select <- function(charge_strs) {
+  ui <- fluidPage(
+    selectInput("selection", "Review spectra:", charge_strs),
+    actionButton("ok", "OK")
+  )
+  server <- function(input, output) {
+    observeEvent(input$ok, {
+      stopApp(returnValue = input$selection)
+    })
+  }
+  vwr = dialogViewer('RMassBank', width = 300, height = 50)
+  return(runApp(shinyApp(server=server, ui=ui, options=list(width=50, height=50))))
+  
+}
+
 
 viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
 {
