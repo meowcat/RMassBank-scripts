@@ -95,12 +95,13 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
                    # ),
                    # second row: display MS
                    fixedRow(
-                     column(7, plotOutput("spectrumPlot")),
-                     column(5, plotOutput("eicCorPlot", click = "eicCorPlot_click"))
+                     column(5, plotOutput("spectrumPlot")),
+                     column(3, plotOutput("eicCorPlot", click = "eicCorPlot_click")),
+                     column(4, plotOutput("eicPeakPlot"))
                    ),
                    # third row: display peak table
                    fixedRow(
-                     dataTableOutput("peaksTable")
+                     DT::dataTableOutput("peaksTable")
                    )
           ),
           tabPanel("eic",
@@ -298,7 +299,8 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       output$eicPlot <- renderPlot(plotEic(w_$w@spectra[[cpd]]))
     })
     
-    observe({
+    
+    peaksData <- reactive({
       cpdName <- compound()
       spectrum <- spectrum()
       if(length(cpdName) == 0)
@@ -315,7 +317,41 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       mzRange <- range(unlist(
         lapply(cpd@children, function(sp) range(mz(sp)))
       ))
-      peaks <- getData(cpd@children[[spectrum]])
+      
+      sp <- cpd@children[[spectrum]]
+      peaks <- getData(sp)
+      
+      # Keep best entry per peak
+      peaksFiltered <- peaks %>%
+        rowid_to_column("rowid") %>%
+        group_by(mz) %>%
+        arrange(!good, desc(formulaMultiplicity), abs(dppm)) %>%
+        slice(1)
+      
+      return(list(
+        cpd=cpd,
+        cpdName=cpdName,
+        sp=sp,
+        spectrum=spectrum,
+        peaks=peaks,
+        peaksFiltered=peaksFiltered,
+        mzRange=mzRange
+      ))
+    })
+    
+    observe({
+      
+      data <- peaksData()
+      if(length(data) == 0)
+        return()
+      
+      peaks <- data$peaksFiltered
+      cpd <- data$cpd
+      spectrum <- data$spectrum
+      mzRange <- data$mzRange
+      cpdName <- data$cpdName
+      sp <- data$sp
+      
       peaks$mzPrecursor <- rep(cpd@mz, nrow(peaks))
       if(!("filterOK" %in% colnames(peaks)))
         peaks$filterOK <- rep(FALSE, nrow(peaks))
@@ -328,21 +364,85 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
         peaks %>%
           mutate(flag = glue(
             '{if_else(noise, "noise", "")}{if_else(low, "low ","")}{if_else(satellite, "sat ", "")}{if_else(good, "good ","")}{if_else(filterOK, "filter+", "")}')) %>%
-          select(-low, -satellite, -good, -rawOK, -formulaSource, -dppmBest, -bestMultiplicity, -filterOK, -noise) %>%
+          select(-low, -satellite, -good, -rawOK, -formulaSource, -dppmBest, -bestMultiplicity, -filterOK, -noise, -rowid) %>%
           dplyr::rename(cor = eicScoreCor, dot = eicScoreDot, int = intensity, `#mf` = formulaCount, `#spec` = formulaMultiplicity) %>%
           dplyr::relocate(flag, .before = formula) %>%
           dplyr::relocate(cor, .after = dppm) %>%
           dplyr::relocate(mzRaw, .before = mzPrecursor) %>%
-          datatable() %>%
+          datatable(selection = "single") %>%
           formatRound(c("mz", "mzRaw", "mzCalc", "mzPrecursor"), digits = 4) %>%
           formatRound(c("dppm", "cor", "dot"), digits = 2) %>%
           formatSignif("int", 2) })
       output$spectrumPlot <- renderPlot({
         plotSpectrum(peaks, mzRange=mzRange, score_cutoff = w_$score_cutoff, metric = metric_set)
-        spectrumLegend(cpd, cpd@children[[spectrum]], cpdName)
+        spectrumLegend(cpd, sp, cpdName)
         })
       output$eicCorPlot <- renderPlot(plotEicCor(w_$score_cutoff, cpd, spectrum, metric = metric_set))
       #output$peaksXyPlot <- renderPlot(xyplot(cpd, spectrum))
+    })
+    
+    
+    eicData <- reactive({
+      
+      data <- peaksData()
+      if(length(data) == 0)
+        return()
+      
+      cpd <- data$cpd
+      sp <- data$sp
+      valid_rowids <- as.character(data$peaksFiltered$rowid)
+      
+      eicParent <- attr(cpd, "eic") %>% mutate(
+        rowid = "parent",
+        precursorScan = scan)
+      eicPeak <- attr(sp, "eic") %>%
+        bind_rows(.id = "rowid") %>%
+        filter(rowid %in% valid_rowids)
+      
+      validPrecursorScans <- unique(eicPeak$precursorScan)
+      
+      return(bind_rows(list(
+        eicParent %>% filter(precursorScan %in% validPrecursorScans),
+        eicPeak
+      )))
+      
+    })
+    
+    # Plot EIC for parent and selected peak
+    observe({
+      
+      data <- peaksData()
+      if(length(data) == 0)
+        return()
+      peakSelected <- input$peaksTable_rows_selected
+      
+      peaks <- data$peaksFiltered
+      cpd <- data$cpd
+      spectrum <- data$spectrum
+      mzRange <- data$mzRange
+      cpdName <- data$cpdName
+      sp <- data$sp
+      
+      origRowId <- as.character(peaks$rowid[peakSelected])
+      
+      eic <- eicData() %>%
+        group_by(rowid) %>%
+        dplyr::mutate(relint = intensity / max(intensity, na.rm = TRUE))
+        
+      output$eicPeakPlot <- renderPlot({
+        eic %>%
+          filter(rowid %in% c("parent", origRowId)) %>%
+          ggplot() +
+          aes(x=rt, y=relint, color = rowid) +
+          geom_line() + 
+          geom_point() +
+          theme_minimal()
+      })
+      
+      message(peakSelected)
+      message(origRowId)
+      message(data$peaks$mz[origRowId])
+      # 
     })
     
     observeEvent(input$quit, {
@@ -423,11 +523,19 @@ plotEicCor <- function(score_cutoff, cpd, spectrum, metric = metric_set) {
     plot.new()
   else {
     d <- getData(cpd@children[[spectrum]])
-    # remove "bad" versions of the peak if there is a "good" one:
-    d <- d[order(!d$good, abs(d$dppm)),,drop=FALSE]
-    d <- d[!duplicated(d$mz),,drop=FALSE]
+    
+    # Keep best entry per peak
+    d <- d %>%
+      dplyr::group_by(mz) %>%
+      dplyr::arrange(!good, desc(formulaMultiplicity), abs(dppm)) %>%
+      dplyr::slice(1)
+    # 
+    # # remove "bad" versions of the peak if there is a "good" one:
+    # d <- d[order(!d$good, abs(d$dppm)),,drop=FALSE]
+    # d <- d[!duplicated(d$mz),,drop=FALSE]
     par(mar=c(3,2,1,1)+0.1)
-    d$metric <- d[,metric] %>% replace_na(0)
+    d <- d %>% 
+      dplyr::mutate(metric = replace_na(!!sym(col), 0))
     d$good <- if_else(d$good, "MF found", "no MF") %>% factor(levels = c("no MF", "MF found"))
     #boxplot(metric ~ good, data = d)
     bp <- boxplot(metric ~ good, data=d, horizontal=F, outline=FALSE)

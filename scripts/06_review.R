@@ -6,7 +6,7 @@ library(RMassBank)
 loadRmbSettings("input/RmbSettings.ini")
 
 
-source(here("viewer.R"))
+source(here::here("viewer.R"))
 source("functions.R")
 
 charge_strs <- c("pH", "mH")
