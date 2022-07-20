@@ -1,5 +1,6 @@
 library(tidyverse)
 library(shiny)
+library(shinyWidgets)
 library(plyr)
 library(RMassBank)
 library(MSnbase)
@@ -8,10 +9,20 @@ library(rhandsontable)
 library(glue)
 library(fs)
 library(DT)
+library(zoo)
 # library(keys)
 source("viewer-include.R")
 
 metric_set <- "eicScoreCor"
+
+colors_threshold <- list(
+  "global" = "red",
+  "cpd" = "blue",
+  "spec" = "grey"
+)
+html_threshold = Vectorize(function(option) {
+  HTML(glue("<span style='color: {colors_threshold[option]}'> {option} </span>"))
+})
 
 debug <- FALSE
 debug_message <- function(...) {
@@ -35,8 +46,11 @@ charge_str_select <- function(charge_strs) {
 }
 
 # https://laustep.github.io/stlahblog/posts/DTcallbacks.html#select-rows-on-click-and-drag
+# Note: "key-focus" is the event triggered because KeyTable key nav *already* causes to
+# move on the grid, and triggers focusing of cells.
+# In contrast, "key" would only handle events that are *not* handled by key-focus or other
+# built-in KeyTable functionality.
 js_select_dt <- c(
-  "var keysReact = [38, 40];",
   "var dt = table.table().node();",
   "var tblID = $(dt).closest('.datatables').attr('id');",
   "var inputName = tblID + '_rows_selected'",
@@ -50,10 +64,31 @@ js_select_dt <- c(
   "    table.row(cell[0][0].row).select();",
   "    row = table.rows({selected: true})",
   #"    Shiny.setInputValue(inputName, [row[0]]);",
+  # Note: this ID is zero-based so add one
   "    Shiny.setInputValue(inputName, [parseInt(row[0]) + 1]);",
   "  }",
   "});"
 )
+
+generateSpecOk <- function(w) {
+  cmap(
+    w@spectra, function(cpd)
+      tibble(
+        ok = cmap_lgl(cpd@children, function(sp)
+          sp@ok),
+        threshold = NA_real_
+      )
+  )
+}
+
+generateCpdOk <- function(w) {
+  tibble(
+    ok = unlist(lapply(
+      w@spectra, function(cpd)
+        cpd@found
+    )),
+    threshold = NA_real_)
+}
 
 viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
 {
@@ -68,14 +103,8 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
     )
   } else {
   w_ <- reactiveValues(w=w,
-                       specOk = cmap(
-                         w@spectra, function(cpd)
-                           cmap_lgl(cpd@children, function(sp)
-                             sp@ok)),
-                       cpdOk = unlist(lapply(
-                         w@spectra, function(cpd)
-                           cpd@found
-                       )),
+                       specOk = generateSpecOk(w),
+                       cpdOk = generateCpdOk(w),
                        cpd = 1,
                        spec = 1,
                        score_cutoff = attr(w, "eicScoreFilter")[[metric_set]]
@@ -114,8 +143,20 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
                    # second row: display MS
                    fixedRow(
                      column(5, plotOutput("spectrumPlot")),
-                     column(3, plotOutput("eicCorPlot", click = "eicCorPlot_click")),
-                     column(4, plotOutput("eicPeakPlot"))
+                     column(2,
+                            radioGroupButtons(
+                              inputId = "thresholdMode",
+                              label = "Threshold",
+                              choiceNames = html_threshold(names(colors_threshold)) %>% set_names(NULL),
+                              choiceValues = names(colors_threshold) %>% set_names(NULL),
+                              size = "xs"
+                            ),
+                            actionLink("clearThreshold", "clear"),
+                            plotOutput("eicCorPlot", click = "eicCorPlot_click", height = 350),
+                            #tags$style("#thresholdMode {font-size: 10px;}"),
+
+                            ),
+                     column(5, plotOutput("eicPeakPlot"))
                    ),
                    # third row: display peak table
                    fixedRow(
@@ -158,7 +199,73 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
     })
     
     observeEvent(input$eicCorPlot_click, {
-      w_$score_cutoff <- input$eicCorPlot_click$y
+      score_cutoff_ <- input$eicCorPlot_click$y
+      isolate({
+        idx <- compoundIndex()  
+        spIdx <- spectrum()
+        # set the threshold either per cpd, spectrum or globally
+        switch (input$thresholdMode,
+          "global" = {
+            w_$score_cutoff <- score_cutoff_
+          },
+          "cpd" = {
+            cutoffs <- w_$cpdOk$threshold
+            cutoffs[[idx]] <- score_cutoff_
+            w_$cpdOk$threshold <- cutoffs
+          },
+          "spec" = {
+            # message(glue("th{score_cutoff_}"))
+            cutoffs <- w_$specOk[[idx]]$threshold
+            cutoffs[[spIdx]] <- score_cutoff_
+            # message(cutoffs)
+            w_$specOk[[idx]]$threshold <- cutoffs
+          }
+        ) # switch
+      }) # isolate
+    }) # observeEvent
+    
+    observeEvent(input$clearThreshold, {
+      score_cutoff_ <- NA_real_
+      isolate({
+        idx <- compoundIndex()  
+        spIdx <- spectrum()
+        # reset the threshold either per cpd, spectrum or globally
+        switch (input$thresholdMode,
+                "global" = {
+                  w_$score_cutoff <- attr(w_$w, "eicScoreFilter")[[metric_set]]
+                },
+                "cpd" = {
+                  cutoffs <- w_$cpdOk$threshold
+                  cutoffs[[idx]] <- score_cutoff_
+                  w_$cpdOk$threshold <- cutoffs
+                },
+                "spec" = {
+                  # message(glue("th{score_cutoff_}"))
+                  cutoffs <- w_$specOk[[idx]]$threshold
+                  cutoffs[[spIdx]] <- score_cutoff_
+                  # message(cutoffs)
+                  w_$specOk[[idx]]$threshold <- cutoffs
+                }
+        ) # switch
+      }) # isolate
+    }) # observeEvent
+    
+    
+    # collect currently set thresholds and the active one for the current
+    # spectrum and cpd. Specific overrules general.
+    validThreshold <- reactive({
+      idx <- compoundIndex()  
+      spIdx <- spectrum()
+      th <- list(
+        global = w_$score_cutoff,
+        cpd = w_$cpdOk$threshold[[idx]],
+        spec = w_$specOk[[idx]]$threshold[[spIdx]]
+      )
+      which_valid <- tail(which(!is.na(th)), 1)
+      th[["which_valid"]] <- names(th)[[which_valid]]
+      th[["valid"]] <- th[[which_valid]]
+      
+      th
     })
     
     # observeEvent(input$keys, {
@@ -185,10 +292,11 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       # message(length(specNames))
       countTot <- cmap_int(w_$w@spectra, ~ length(.x@children))
       df <- tibble(
-        ok = w_$cpdOk,
+        ok = w_$cpdOk$ok,
         #ok = rep(TRUE, length(specNames)),
         name = specNames,
         adduct = specAdducts,
+        threshold = w_$cpdOk$threshold,
         num_ok = as.character(glue("{countOK}/{countTot}")))
       rhandsontable(df, 
                     selectCallback = TRUE, 
@@ -212,6 +320,7 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
         hot_col(col = "name", readOnly = TRUE) %>%
         hot_col(col = "adduct", readOnly = TRUE) %>%
         hot_col(col = "num_ok", readOnly = TRUE) %>%
+        hot_col(col = "threshold", readOnly = TRUE) %>%
         hot_table(highlightRow = TRUE)
     })
     
@@ -244,13 +353,19 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       cpd <- compoundIndex()
       if(length(cpd) == 0)
         return()
+      
+      # observe w_$w
+      ok <- w_$specOk
+      
+      
       if(between(cpd, 1, length(w_$w@spectra)))
       {
         isolate({
         debug_message(str(cpd))
         debug_message(glue("{w_$specOk[[cpd]]} "))
         df <- data.frame(
-          ok = isolate({w_$specOk[[cpd]]}),
+          ok = isolate({w_$specOk[[cpd]]$ok}),
+          threshold = isolate({w_$specOk[[cpd]]$threshold}),
           id = seq_along(w_$w@spectra[[cpd]]@children),
           int = w_$w@spectra[[cpd]]@children %>% as.list() %>% map_dbl(~ getData(.x) %>% pull(intensity) %>% max()) %>% format(scientific = T, digits = 2)
         )
@@ -258,6 +373,7 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
           hot_col(col = "ok", type = "checkbox") %>%
           hot_col(col = "id", readOnly = TRUE) %>%
           hot_col(col = "int", readOnly = TRUE) %>%
+          hot_col(col = "threshold", readOnly = TRUE) %>%
           hot_table(highlightRow = TRUE)
         })
       }
@@ -286,12 +402,12 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       df <- hot_to_r(input$spectrum)
       isolate({
         idx <- compoundIndex()  
-        debug_message(glue("setting {idx}, old: {w_$specOk[[idx]]}, new: {df$ok} \n"))
+        debug_message(glue("setting {idx}, old: {w_$specOk[[idx]]$ok}, new: {df$ok} \n"))
         if(is.null(df$ok))
           debug_message("{w_$specOk[[idx]]} would be NULLed - we skip this")
         else(
           if(length(idx) > 0)
-            w_$specOk[[idx]] <- df$ok  
+            w_$specOk[[idx]]$ok <- df$ok  
         )
       })
       
@@ -404,23 +520,27 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
             # and keytable + select for selection by keyboard (callback js_select_dt, see above).
             # The keyboard-selected row just overwrites the regular input$peaksTable_rows_selected
             # field.
+            # Note: server=FALSE is required (see below) or this will return wrong row IDs
+            # when using client-side sorting.
             selection = "single",
             editable = FALSE, 
             callback = JS(js_select_dt),
             extensions = c("KeyTable", "Select"),
             options = list(
-              keys = list(keys = c(38, 40, 13)),
+              keys = TRUE,
               select = TRUE
             )
             ) %>%
           formatRound(c("mz", "mzRaw", "mzCalc", "mzPrecursor"), digits = 4) %>%
           formatRound(c("dppm", "cor", "dot"), digits = 2) %>%
-          formatSignif("int", 2) }, server = FALSE)
+          formatSignif("int", 2) }, 
+        server = FALSE) # Note: server = FALSE is required (see above)
       output$spectrumPlot <- renderPlot({
-        plotSpectrum(peaks, mzRange=mzRange, score_cutoff = w_$score_cutoff, metric = metric_set)
+        plotSpectrum(peaks, mzRange=mzRange, score_cutoff = validThreshold()$valid, metric = metric_set)
         spectrumLegend(cpd, sp, cpdName)
         })
-      output$eicCorPlot <- renderPlot(plotEicCor(w_$score_cutoff, cpd, spectrum, metric = metric_set))
+      output$eicCorPlot <- renderPlot(plotEicCor(validThreshold(), cpd, spectrum, metric = metric_set))
+      #output$eicCorPlot <- renderPlot(plotEicCor(1, cpd, spectrum, metric = metric_set))
       #output$peaksXyPlot <- renderPlot(xyplot(cpd, spectrum))
     })
     
@@ -510,13 +630,8 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       if(is.null(input$reset))
         return()
       debug_message("reset executed")
-      w_$specOk <- lapply(w_$w@spectra, function(cpd)
-                               unlist(lapply(cpd@children, function(sp)
-                                 sp@ok)))
-      w_$cpdOk <- unlist(lapply(
-                             w_$w@spectra, function(cpd)
-                               cpd@found
-                           ))
+      w_$specOk <- generateSpecOk(w_$w)
+      w_$cpdOk <- generateCpdOk(w_$w)
       })
     
     
@@ -573,7 +688,9 @@ plotSpectrum <- function(peaks, mzRange=NA, score_cutoff, metric = metric_set)
          type='h', lwd=2, col="green")
 }
 
-plotEicCor <- function(score_cutoff, cpd, spectrum, metric = metric_set) {
+plotEicCor <- function(thresholds, cpd_, spectrum_, metric = metric_set) {
+  cpd <- cpd_
+  spectrum <- spectrum_
   cor <- property(cpd@children[[spectrum]], metric)
   if(is.null(cor))
     plot.new()
@@ -590,8 +707,9 @@ plotEicCor <- function(score_cutoff, cpd, spectrum, metric = metric_set) {
     # d <- d[order(!d$good, abs(d$dppm)),,drop=FALSE]
     # d <- d[!duplicated(d$mz),,drop=FALSE]
     par(mar=c(3,2,1,1)+0.1)
+    metric_col <- metric
     d <- d %>% 
-      dplyr::mutate(metric = replace_na(!!sym(col), 0))
+      dplyr::mutate(metric = replace_na(!!sym(metric_col), 0))
     d$good <- if_else(d$good, "MF found", "no MF") %>% factor(levels = c("no MF", "MF found"))
     #boxplot(metric ~ good, data = d)
     bp <- boxplot(metric ~ good, data=d, horizontal=F, outline=FALSE)
@@ -604,7 +722,11 @@ plotEicCor <- function(score_cutoff, cpd, spectrum, metric = metric_set) {
     #        pch=19)
     #         
     
-    abline(h=score_cutoff, col="red")
+    for(threshold in names(colors_threshold)) {
+      abline(h=thresholds[[threshold]], col=colors_threshold[[threshold]],
+             lwd = if_else(threshold == thresholds[["which_valid"]], 2, 1))
+    }
+    
     title(ylab = "correlation")
   }
 }
