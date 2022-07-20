@@ -110,6 +110,8 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
                        score_cutoff = attr(w, "eicScoreFilter")[[metric_set]]
   )}
   
+  frozen <- reactiveVal(FALSE)
+  
   ui <- fluidPage(
     tags$style("
       .checkbox { /* checkbox is a div class*/
@@ -157,6 +159,9 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
 
                             ),
                      column(5, plotOutput("eicPeakPlot"))
+                   ),
+                   fixedRow(
+                     prettyCheckbox("filterPeaksTable", "Show only filtered peaks")
                    ),
                    # third row: display peak table
                    fixedRow(
@@ -280,7 +285,7 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
     # })
     
     
-    output$compound <- renderRHandsontable({
+    output$compound <- renderRHandsontable({ withProgress( message="wait", {
       specNames <- names(w_$w@spectra)
       specModes <- cmap_chr(w_$w@spectra, ~.x@mode)
       adductTable <- RMassBank:::getAdductInformation("")
@@ -298,7 +303,7 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
         adduct = specAdducts,
         threshold = w_$cpdOk$threshold,
         num_ok = as.character(glue("{countOK}/{countTot}")))
-      rhandsontable(df, 
+      rh <- rhandsontable(df, 
                     selectCallback = TRUE, 
                     rowHeaders = NULL,
                     rowhighlight = 7) %>%
@@ -322,7 +327,10 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
         hot_col(col = "num_ok", readOnly = TRUE) %>%
         hot_col(col = "threshold", readOnly = TRUE) %>%
         hot_table(highlightRow = TRUE)
-    })
+      frozen(FALSE)
+      rh
+    }) # withProgress
+      }) # renderRHandsonTable
     
     
     # output$compound <-  DT::renderDataTable({
@@ -354,20 +362,22 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       if(length(cpd) == 0)
         return()
       
-      # observe w_$w
+      
       ok <- w_$specOk
-      
-      
       if(between(cpd, 1, length(w_$w@spectra)))
       {
         isolate({
+        # observe w_$w
+        
+        
+          
         debug_message(str(cpd))
         debug_message(glue("{w_$specOk[[cpd]]} "))
         df <- data.frame(
           ok = isolate({w_$specOk[[cpd]]$ok}),
-          threshold = isolate({w_$specOk[[cpd]]$threshold}),
           id = seq_along(w_$w@spectra[[cpd]]@children),
-          int = w_$w@spectra[[cpd]]@children %>% as.list() %>% map_dbl(~ getData(.x) %>% pull(intensity) %>% max()) %>% format(scientific = T, digits = 2)
+          int = w_$w@spectra[[cpd]]@children %>% as.list() %>% map_dbl(~ getData(.x) %>% pull(intensity) %>% max()) %>% format(scientific = T, digits = 2),
+          threshold = isolate({w_$specOk[[cpd]]$threshold})
         )
         rhandsontable(df, selectCallback = TRUE) %>%
           hot_col(col = "ok", type = "checkbox") %>%
@@ -399,6 +409,9 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
     # spectra are exported
     observe({
       #
+      #out <<- input$compound
+      if(frozen())
+        return()
       df <- hot_to_r(input$spectrum)
       isolate({
         idx <- compoundIndex()  
@@ -420,6 +433,9 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
     # compounds are exported
     observe({
       #out <<- input$compound
+      if(frozen())
+        return()
+      frozen(TRUE)
       df <- hot_to_r(input$compound)
       isolate({
         # cpd <- compound()
@@ -428,8 +444,8 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
         #   return()
         # if(length(idx) == 0)
         #   return()
-        if(length(df$ok) == length(w_$cpdOk))
-          w_$cpdOk <- df$ok
+        if(length(df$ok) == length(w_$cpdOk$ok))
+          w_$cpdOk$ok <- df$ok
         else
           debug_message("incorrect length of cpdOK - not setting (yet?)")
       })
@@ -506,11 +522,18 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       if(!("bestMultiplicity" %in% colnames(peaks)))
           peaks$bestMultiplicity <- rep(0, nrow(peaks))
 
+      validTh <- validThreshold()
+      filtered <- input$filterPeaksTable
+      
       output$peaksTable <- DT::renderDT({
+        
+        
         peaks %>%
-          mutate(flag = glue(
+          dplyr::mutate(filterOK = !!sym(metric_set) >= validTh$valid) %>%
+          dplyr::filter(!filtered | filterOK) %>%
+          dplyr::mutate(flag = glue(
             '{if_else(noise, "noise", "")}{if_else(low, "low ","")}{if_else(satellite, "sat ", "")}{if_else(good, "good ","")}{if_else(filterOK, "filter+", "")}')) %>%
-          select(-low, -satellite, -good, -rawOK, -formulaSource, -dppmBest, -bestMultiplicity, -filterOK, -noise, -rowid) %>%
+          dplyr::select(-low, -satellite, -good, -rawOK, -formulaSource, -dppmBest, -bestMultiplicity, -filterOK, -noise, -rowid) %>%
           dplyr::rename(cor = eicScoreCor, dot = eicScoreDot, int = intensity, `#mf` = formulaCount, `#spec` = formulaMultiplicity) %>%
           dplyr::relocate(flag, .before = formula) %>%
           dplyr::relocate(cor, .after = dppm) %>%
@@ -536,10 +559,10 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
           formatSignif("int", 2) }, 
         server = FALSE) # Note: server = FALSE is required (see above)
       output$spectrumPlot <- renderPlot({
-        plotSpectrum(peaks, mzRange=mzRange, score_cutoff = validThreshold()$valid, metric = metric_set)
+        plotSpectrum(peaks, mzRange=mzRange, score_cutoff = validTh$valid, metric = metric_set)
         spectrumLegend(cpd, sp, cpdName)
         })
-      output$eicCorPlot <- renderPlot(plotEicCor(validThreshold(), cpd, spectrum, metric = metric_set))
+      output$eicCorPlot <- renderPlot(plotEicCor(validTh, cpd, spectrum, metric = metric_set))
       #output$eicCorPlot <- renderPlot(plotEicCor(1, cpd, spectrum, metric = metric_set))
       #output$peaksXyPlot <- renderPlot(xyplot(cpd, spectrum))
     })
@@ -748,7 +771,7 @@ plotEic <- function(cpd)
 spectrumLegend <- function(cpd, sp, cpdName)
 {
   leg <- c("name" = glue("{cpd@name} ({cpdName})"),
-    "precursor" = paste0(sp@precursorMz, " (", cpd@mz, ")"),
+    "precursor" = glue("{round(sp@precursorMz,4)} (theor. {round(cpd@mz, 4)})"),
     "int" = format(max(intensity(sp)),scientific = TRUE, digits=1),
     "ce" = collisionEnergy(sp)
   )
