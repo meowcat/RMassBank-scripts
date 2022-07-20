@@ -17,7 +17,7 @@ infolists <- c()
 
 charge_strs <- c("pH", "mH")
 
-
+# Check that the necessary files exist
 walk(charge_strs, function(charge_str) {
   assert_that(fs::file_exists(glue("results/review_{charge_str}_score_cutoff.csv")),
               msg = glue("You have not yet reviewed {charge_str} data")
@@ -31,10 +31,11 @@ walk(charge_strs, function(charge_str) {
 })
 
 
+# run mbworkflow (collect online data) for all specified modes
 walk(charge_strs, function(charge_str) {
   
   
-  cpdOk <- read_csv(glue("results/review_{charge_str}_cpd_ok.csv")) %>% pull(ok)
+  cpdOk <- read_csv(glue("results/review_{charge_str}_cpd_ok.csv"))
   specOk <- read_csv(glue("results/review_{charge_str}_spec_ok.csv")) %>%
     group_by(cpd) %>%
     group_split() %>%
@@ -49,27 +50,46 @@ walk(charge_strs, function(charge_str) {
   
   w_ <- loadMsmsWorkspace(glue("results/spectra-{charge_str}-autoreview.RData"))
   
-  # Select and deselect spectra based on the choices from the review files
-  for(i in seq_along(w_@spectra))
+  # Inject review data into compounds,
+  # then select and deselect spectra based on the choices from the review files
+  for(i in seq_along(w_@spectra)) {
     attr(w_@spectra[[i]], "specOK") <- specOk[[i]]
-  w_@spectra <- w_@spectra[cpdOk]
+    attr(w_@spectra[[i]], "threshold") <- cpdOk$threshold[[i]]
+  }
+  w_@spectra <- w_@spectra[cpdOk$ok]
   
+  # Have a fallback in case eicScoreCor was not set for whatever reason
   metric <- "eicScoreCor"
   if(!is.na(score_cutoff))
     eicScoreLimit <- score_cutoff
-  else
+  else {
+    warning("score cutoff could not be read from review data, using calculated default")
     eicScoreLimit <- attr(w_, "eicScoreFilter")[[metric]]
+  }
+    
   
   w_@spectra <- as(lapply(w_@spectra, function(cpd) {
     specOK <- attr(w_, "specOK")
-    for(i in seq_along(specOK))
-      cpd@children[[i]]@ok <- specOK[[i]]
+    for(i in seq_along(specOK)) {
+      cpd@children[[i]]@ok <- specOK$ok[[i]]
+      attr(cpd@children[[i]], "threshold") <- specOK$threshold[[i]]
+    }
     cpd@children <- as(lapply(cpd@children, function(sp) {
+      
+      # find the valid threshold for this spectrum:
+      # can be the global, compound-specific or spectrum-specific threshold
+      thresholds <- c(
+        eicScoreLimit,
+        attr(cpd, "threshold"),
+        attr(sp, "threshold")
+      )
+      threshold <- tail(thresholds[!is.na(thresholds)], 1)
+      
       d <- getData(sp)
       d <- d %>% group_by(mz) %>% arrange(!good, abs(dppm)) %>% slice(1)
       d <- d %>% mutate(
         good_ = good,
-        good = eicScoreCor > eicScoreLimit
+        good = eicScoreCor > threshold
       ) %>% filter(good)
       sp <- setData(sp, as.data.frame(d))
       sp

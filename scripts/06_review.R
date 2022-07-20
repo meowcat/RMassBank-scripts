@@ -9,9 +9,9 @@ loadRmbSettings("input/RmbSettings.ini")
 source(here::here("viewer.R"))
 source("functions.R")
 
-charge_strs <- c("pH", "mH")
-charge_str <- charge_str_select(charge_strs)
-#charge_str <- "pH"
+# charge_strs <- c("pH", "mH")
+# charge_str <- charge_str_select(charge_strs)
+charge_str <- "pH"
 backupPath <- glue("results/viewer_status_{charge_str}.RData")
 
 
@@ -54,18 +54,20 @@ review <- viewer(w, backupPath = backupPath)
 
 # Export review results as CSV
 write_csv(tibble(
-  cpd = seq_along(review$cpdOk),
+  cpd = seq_along(review$cpdOk$ok),
   name = names(w@spectra),
-  ok = review$cpdOk),
+  ok = review$cpdOk$ok,
+  threshold = review$cpdOk$threshold),
   file = glue("results/review_{charge_str}_cpd_ok.csv"))
 
-spec_ok <-  pmap_dfr(
+spec_ok <-
   tibble(.x = review$specOk %>% as.list(),
          .y = seq_along(review$specOk),
          ce = cmap(w@spectra, function(cpd) cmap_chr(cpd@children, ~.x@collisionEnergy)) %>% as.list(),
-         name = names(w@spectra)), 
+         name = names(w@spectra)) %>%
+  pmap_dfr(
   function(.x, .y, name, ce) {
-    tibble(cpd = .y, name = name, spectrum = seq_along(.x), ce = ce, ok = .x)
+    tibble(cpd = .y, name = name, spectrum = seq_along(.x$ok), ce = ce, "ok" = .x$ok, "threshold" = .x$threshold)
   })
 
 write_csv(spec_ok, 
