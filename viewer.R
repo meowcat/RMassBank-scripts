@@ -34,6 +34,26 @@ charge_str_select <- function(charge_strs) {
   
 }
 
+# https://laustep.github.io/stlahblog/posts/DTcallbacks.html#select-rows-on-click-and-drag
+js_select_dt <- c(
+  "var keysReact = [38, 40];",
+  "var dt = table.table().node();",
+  "var tblID = $(dt).closest('.datatables').attr('id');",
+  "var inputName = tblID + '_rows_selected'",
+  "var incrementName = tblID + '_rows_selected2_increment'",
+  "table.on('key-focus', function(e, datatable, cell, originalEvent){",
+  "   console.log(originalEvent);",
+  #"   console.log(key);",
+  "  if (originalEvent.type === 'keydown'){",
+  #"  if (keysReact.indexOf(key) > -1){",
+  "    table.rows().deselect(); ",
+  "    table.row(cell[0][0].row).select();",
+  "    row = table.rows({selected: true})",
+  #"    Shiny.setInputValue(inputName, [row[0]]);",
+  "    Shiny.setInputValue(inputName, [parseInt(row[0]) + 1]);",
+  "  }",
+  "});"
+)
 
 viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
 {
@@ -60,8 +80,6 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
                        spec = 1,
                        score_cutoff = attr(w, "eicScoreFilter")[[metric_set]]
   )}
-  
-  hotkeys <- c("+", "-", ".")
   
   ui <- fluidPage(
     tags$style("
@@ -101,7 +119,7 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
                    ),
                    # third row: display peak table
                    fixedRow(
-                     DT::dataTableOutput("peaksTable")
+                     DT::DTOutput("peaksTable")
                    )
           ),
           tabPanel("eic",
@@ -259,7 +277,10 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
     })
     
     
-    
+    # Update the spectra checked status (the "ok" column in the dataframe
+    # retrieved from HandsOnTable, which is the checkboxes) into the w_$specOK
+    # variable, which will finally be exported as a textfile and decide which
+    # spectra are exported
     observe({
       #
       df <- hot_to_r(input$spectrum)
@@ -276,6 +297,11 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       
     })
 
+    
+    # Update the compound checked status (the "ok" column in the dataframe
+    # retrieved from HandsOnTable, which is the checkboxes) into the w_$cpdOk
+    # variable, which will finally be exported as a textfile and decide which
+    # compounds are exported
     observe({
       #out <<- input$compound
       df <- hot_to_r(input$compound)
@@ -293,13 +319,16 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       })
     })
 
-    
+    # Plot EIC on second tab. This is somewhat obsolete with the new combined
+    # EIC plot including fragments.
     observe({
       cpd <- compound()
       output$eicPlot <- renderPlot(plotEic(w_$w@spectra[[cpd]]))
     })
     
     
+    # Collect all data relating to the selected spectrum (cpd + child):
+    # the RMassBank objects, peak table, deduplicated peak table, extras
     peaksData <- reactive({
       cpdName <- compound()
       spectrum <- spectrum()
@@ -339,6 +368,7 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       ))
     })
     
+    # Render peak table and correlations boxplot
     observe({
       
       data <- peaksData()
@@ -360,7 +390,7 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       if(!("bestMultiplicity" %in% colnames(peaks)))
           peaks$bestMultiplicity <- rep(0, nrow(peaks))
 
-      output$peaksTable <- renderDataTable({
+      output$peaksTable <- DT::renderDT({
         peaks %>%
           mutate(flag = glue(
             '{if_else(noise, "noise", "")}{if_else(low, "low ","")}{if_else(satellite, "sat ", "")}{if_else(good, "good ","")}{if_else(filterOK, "filter+", "")}')) %>%
@@ -369,10 +399,23 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
           dplyr::relocate(flag, .before = formula) %>%
           dplyr::relocate(cor, .after = dppm) %>%
           dplyr::relocate(mzRaw, .before = mzPrecursor) %>%
-          datatable(selection = "single") %>%
+          datatable(
+            # This datatable uses both shiny's select for conventional selection
+            # and keytable + select for selection by keyboard (callback js_select_dt, see above).
+            # The keyboard-selected row just overwrites the regular input$peaksTable_rows_selected
+            # field.
+            selection = "single",
+            editable = FALSE, 
+            callback = JS(js_select_dt),
+            extensions = c("KeyTable", "Select"),
+            options = list(
+              keys = list(keys = c(38, 40, 13)),
+              select = TRUE
+            )
+            ) %>%
           formatRound(c("mz", "mzRaw", "mzCalc", "mzPrecursor"), digits = 4) %>%
           formatRound(c("dppm", "cor", "dot"), digits = 2) %>%
-          formatSignif("int", 2) })
+          formatSignif("int", 2) }, server = FALSE)
       output$spectrumPlot <- renderPlot({
         plotSpectrum(peaks, mzRange=mzRange, score_cutoff = w_$score_cutoff, metric = metric_set)
         spectrumLegend(cpd, sp, cpdName)
@@ -382,6 +425,11 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
     })
     
     
+    # Collect EIC from parent and fragments into longform tibble
+    # from the attr(cpd, "eic") (a single chromatogram) and the 
+    # attr(sp, "eic") (a list of chromatograms, one for each peak of getData())
+    # Then deduplicate but keep the original rowid to know which peak in 
+    # peaksFiltered belongs to the eic.
     eicData <- reactive({
       
       data <- peaksData()
@@ -414,8 +462,10 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       data <- peaksData()
       if(length(data) == 0)
         return()
-      peakSelected <- input$peaksTable_rows_selected
       
+      # get selected row
+      peakSelected <- input$peaksTable_rows_selected
+
       peaks <- data$peaksFiltered
       cpd <- data$cpd
       spectrum <- data$spectrum
@@ -428,20 +478,26 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       eic <- eicData() %>%
         group_by(rowid) %>%
         dplyr::mutate(relint = intensity / max(intensity, na.rm = TRUE))
+      
+      getPeakLabel <- Vectorize(function(rowid_) {
+        if(rowid_ == "parent")
+          return("parent")
+        peaks %>% 
+          filter(rowid == as.integer(rowid_)) %>%
+          glue_data("{round(mz, 4)}")
+        })
         
       output$eicPeakPlot <- renderPlot({
         eic %>%
           filter(rowid %in% c("parent", origRowId)) %>%
+          left_join(peaks %>% mutate(rowid = as.character(rowid)), by = "rowid") %>%
           ggplot() +
           aes(x=rt, y=relint, color = rowid) +
+          scale_color_discrete(labels = getPeakLabel) +
           geom_line() + 
           geom_point() +
           theme_minimal()
       })
-      
-      message(peakSelected)
-      message(origRowId)
-      message(data$peaks$mz[origRowId])
       # 
     })
     
