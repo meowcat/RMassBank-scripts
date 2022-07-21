@@ -36,10 +36,10 @@ walk(charge_strs, function(charge_str) {
   
   
   cpdOk <- read_csv(glue("results/review_{charge_str}_cpd_ok.csv"))
-  specOk <- read_csv(glue("results/review_{charge_str}_spec_ok.csv")) %>%
-    group_by(cpd) %>%
-    group_split() %>%
-    map(~.x$ok)
+  specOk <- read_csv(glue("results/review_{charge_str}_spec_ok.csv")) # %>%
+    # group_by(cpd) %>%
+    # group_split() %>%
+    # map(~.x$ok)
   
   cutoff_file <- glue("results/review_{charge_str}_score_cutoff.csv")
   if(fs::file_exists(cutoff_file))
@@ -53,7 +53,8 @@ walk(charge_strs, function(charge_str) {
   # Inject review data into compounds,
   # then select and deselect spectra based on the choices from the review files
   for(i in seq_along(w_@spectra)) {
-    attr(w_@spectra[[i]], "specOK") <- specOk[[i]]
+    attr(w_@spectra[[i]], "specOK") <- specOk %>% filter(cpd == i)
+    # assert_that(all(attr(w_@spectra[[i]], "specOK")$name == ))
     attr(w_@spectra[[i]], "threshold") <- cpdOk$threshold[[i]]
   }
   w_@spectra <- w_@spectra[cpdOk$ok]
@@ -69,8 +70,9 @@ walk(charge_strs, function(charge_str) {
     
   
   w_@spectra <- as(lapply(w_@spectra, function(cpd) {
-    specOK <- attr(w_, "specOK")
-    for(i in seq_along(specOK)) {
+    specOK <- attr(cpd, "specOK")
+    assert_that(nrow(specOK) == length(cpd@children))
+    for(i in seq_along(cpd@children)) {
       cpd@children[[i]]@ok <- specOK$ok[[i]]
       attr(cpd@children[[i]], "threshold") <- specOK$threshold[[i]]
     }
@@ -89,7 +91,7 @@ walk(charge_strs, function(charge_str) {
       d <- d %>% group_by(mz) %>% arrange(!good, abs(dppm)) %>% slice(1)
       d <- d %>% mutate(
         good_ = good,
-        good = eicScoreCor > threshold
+        good = (eicScoreCor > threshold) & !satellite & !low
       ) %>% filter(good)
       sp <- setData(sp, as.data.frame(d))
       sp
