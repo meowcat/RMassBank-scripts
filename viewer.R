@@ -10,6 +10,7 @@ library(glue)
 library(fs)
 library(DT)
 library(zoo)
+library(shinybusy)
 # library(keys)
 source("viewer-include.R")
 
@@ -90,6 +91,8 @@ generateCpdOk <- function(w) {
     threshold = NA_real_)
 }
 
+now <- function() proc.time()["elapsed"] * 1000
+
 viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
 {
   if(is.list(w)) {
@@ -110,7 +113,18 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
                        score_cutoff = attr(w, "eicScoreFilter")[[metric_set]]
   )}
   
-  frozen <- reactiveVal(FALSE)
+  # frozen <- reactiveVal(FALSE)
+  # frozen_sp <- reactiveVal(FALSE)
+  
+  invalidate <- reactiveValues(
+    #specOK_BE = FALSE,
+    specOK_FE = FALSE,
+    specOK_FE_freeze = FALSE,
+    cpdOK_FE = FALSE,
+    cpdOK_FE_freeze = FALSE,
+    cpdOK_FE_timer = now(),
+    specOK_FE_timer = now()
+  )
   
   ui <- fluidPage(
     tags$style("
@@ -203,7 +217,11 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
         w_$cpd <- r
     })
     
-    observeEvent(input$eicCorPlot_click, {
+    observe({
+      input$eicCorPlot_click
+      if(is.null(input$eicCorPlot_click))
+        return()
+      
       score_cutoff_ <- input$eicCorPlot_click$y
       isolate({
         idx <- compoundIndex()  
@@ -227,9 +245,18 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
           }
         ) # switch
       }) # isolate
-    }) # observeEvent
+      # Invalidate components:
+      switch (isolate({input$thresholdMode}),
+              "spec" = {invalidate$specOK_FE <- TRUE},
+              "cpd" = {invalidate$cpdOK_FE <- TRUE}
+      )
+    }) # observe
     
-    observeEvent(input$clearThreshold, {
+    observe({
+      input$clearThreshold
+      if(is.null(input$clearThreshold))
+        return()
+      
       score_cutoff_ <- NA_real_
       isolate({
         idx <- compoundIndex()  
@@ -253,7 +280,13 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
                 }
         ) # switch
       }) # isolate
-    }) # observeEvent
+      
+      # Invalidate components:
+      switch (isolate({input$thresholdMode}),
+              "spec" = {invalidate$specOK_FE <- TRUE},
+              "cpd" = {invalidate$cpdOK_FE <- TRUE}
+      )
+    }) # observe
     
     
     # collect currently set thresholds and the active one for the current
@@ -284,8 +317,10 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
     #     actions[[input$keys]]()
     # })
     
-    
-    output$compound <- renderRHandsontable({ withProgress( message="wait", {
+    observeEvent(invalidate$cpdOK_FE, {
+                 
+    # show_modal_spinner()
+    output$compound <- renderRHandsontable( {
       specNames <- names(w_$w@spectra)
       specModes <- cmap_chr(w_$w@spectra, ~.x@mode)
       adductTable <- RMassBank:::getAdductInformation("")
@@ -296,6 +331,7 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       debug_message(glue("{length(specNames)} cpds, {length(w_$cpdOk)} list of cpds"))
       # message(length(specNames))
       countTot <- cmap_int(w_$w@spectra, ~ length(.x@children))
+      message(w_$cpdOk$ok)
       df <- tibble(
         ok = w_$cpdOk$ok,
         #ok = rep(TRUE, length(specNames)),
@@ -327,10 +363,15 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
         hot_col(col = "num_ok", readOnly = TRUE) %>%
         hot_col(col = "threshold", readOnly = TRUE) %>%
         hot_table(highlightRow = TRUE)
-      frozen(FALSE)
+      
       rh
-    }) # withProgress
       }) # renderRHandsonTable
+    
+    invalidate$cpdOK_FE <- FALSE
+    invalidate$cpdOK_FE_freeze <- FALSE
+    # remove_modal_spinner()
+    
+    }) # observeEvent(invalidate$cpdOK_FE
     
     
     # output$compound <-  DT::renderDataTable({
@@ -357,13 +398,18 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       return(sel$select$r)
     })
     
+    
+    observeEvent(invalidate$specOK_FE, {
+        
     output$spectrum <- renderRHandsontable({
       cpd <- compoundIndex()
       if(length(cpd) == 0)
         return()
       
       
-      ok <- w_$specOk
+      # ok <- w_$specOk
+      # message(cpd)
+      # message(ok[[cpd]]$ok)
       if(between(cpd, 1, length(w_$w@spectra)))
       {
         isolate({
@@ -379,15 +425,19 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
           int = w_$w@spectra[[cpd]]@children %>% as.list() %>% map_dbl(~ getData(.x) %>% pull(intensity) %>% max()) %>% format(scientific = T, digits = 2),
           threshold = isolate({w_$specOk[[cpd]]$threshold})
         )
-        rhandsontable(df, selectCallback = TRUE) %>%
+        rh <- rhandsontable(df, selectCallback = TRUE) %>%
           hot_col(col = "ok", type = "checkbox") %>%
           hot_col(col = "id", readOnly = TRUE) %>%
           hot_col(col = "int", readOnly = TRUE) %>%
           hot_col(col = "threshold", readOnly = TRUE) %>%
           hot_table(highlightRow = TRUE)
         })
+        rh 
       }
-        
+      
+
+
+      
       #   
       #   %>%
       #     datatable(selection = "single", filter="none",
@@ -400,22 +450,43 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       #               rownames = FALSE) %>%
       #     DT::formatStyle(columns = c(1,2), fontSize = '75%'))
       # }
-    })
+    }) # renderRHandsontable
+    
+    # Reset invalidation
+    invalidate$specOK_FE <- FALSE
+    invalidate$specOK_FE_freeze <- FALSE
+    
+    }) # observeEvent(invalidate$specOK_FE)
     
     
     # Update the spectra checked status (the "ok" column in the dataframe
     # retrieved from HandsOnTable, which is the checkboxes) into the w_$specOK
     # variable, which will finally be exported as a textfile and decide which
     # spectra are exported
-    observe({
+    observeEvent(input$spectrum, ignoreInit = TRUE, {
       #
       #out <<- input$compound
-      if(frozen())
-        return()
+      
+      debug_message("getting spectrum")
+      
       df <- hot_to_r(input$spectrum)
+      
+      if(invalidate$specOK_FE_freeze)
+        return()
+      #invalidate$specOK_FE_freeze <- TRUE
+      
+      # debug_message("frozen?")
+      # if(isolate(frozen_sp()))
+      #   return()
+      # frozen_sp(TRUE)
+      # debug_message("no")
+      
       isolate({
+        #invalidate$specOK_FE_freeze <- TRUE
         idx <- compoundIndex()  
-        debug_message(glue("setting {idx}, old: {w_$specOk[[idx]]$ok}, new: {df$ok} \n"))
+        debug_message(glue("setting {idx}, 
+                           old: {paste0(w_$specOk[[idx]]$ok, collapse='')}, 
+                           new: {paste0(df$ok, collapse = '')} \n"))
         if(is.null(df$ok))
           debug_message("{w_$specOk[[idx]]} would be NULLed - we skip this")
         else(
@@ -432,10 +503,26 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
     # variable, which will finally be exported as a textfile and decide which
     # compounds are exported
     observe({
-      #out <<- input$compound
-      if(frozen())
+      
+      input$compound
+      if(is.null(input$compound))
         return()
-      frozen(TRUE)
+
+      debug_message("compound update: frozen?")
+      if(isolate(invalidate$cpdOK_FE_freeze)) {
+        remove_modal_spinner()
+        isolate({invalidate$cpdOK_FE_freeze <- FALSE})
+        return()
+      }
+      debug_message("not frozen")
+      show_modal_spinner()
+      isolate({invalidate$cpdOK_FE_freeze <- TRUE})
+      invalidateLater(500, session)
+      
+      isolate({
+        #out <<- input$compound
+        
+        
       df <- hot_to_r(input$compound)
       isolate({
         # cpd <- compound()
@@ -444,12 +531,18 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
         #   return()
         # if(length(idx) == 0)
         #   return()
-        if(length(df$ok) == length(w_$cpdOk$ok))
+        if(length(df$ok) == length(w_$cpdOk$ok)) {
           w_$cpdOk$ok <- df$ok
+          debug_message(glue("setting cpdOk to {paste0(df$ok, collapse=' ')} "))
+        }
         else
           debug_message("incorrect length of cpdOK - not setting (yet?)")
       })
-    })
+    }) # isolate
+      
+
+      
+    }) # observe(input$compound)
 
     # Plot EIC on second tab. This is somewhat obsolete with the new combined
     # EIC plot including fragments.
@@ -659,19 +752,29 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       stopApp(returnValue = reactiveValuesToList(w_))
     })
     
-    observeEvent(input$reset, {
-      debug_message("reset")
+    observe({
+      input$reset
       if(is.null(input$reset))
         return()
+      
+      isolate({
+      debug_message("reset")
+      
       debug_message("reset executed")
       w_$specOk <- generateSpecOk(w_$w)
       w_$cpdOk <- generateCpdOk(w_$w)
       })
+      # Invalidate on-demand UI
+      invalidate$specOK_FE <- TRUE
+      invalidate$cpdOK_FE <- TRUE
+      
+    })
     
     
     observeEvent(input$backup, {
       if(is.null(input$backup))
         return()
+      
       e <- new.env()
       e$specOk <- w_$specOk
       e$cpdOk <- w_$cpdOk
@@ -682,15 +785,23 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
     
     
     
-    observeEvent(input$restore, {
+    observe({
+      input$restore
       if(is.null(input$restore))
         return()
-      e <- new.env()
-      load(backupPath, envir = e)
-      w_$specOk <- e$specOk
-      w_$cpdOk <- e$cpdOk
-      if(!is.null(e$score_cutoff))
-        w_$score_cutoff <- e$score_cutoff
+      
+      isolate({
+        e <- new.env()
+        load(backupPath, envir = e)
+        w_$specOk <- e$specOk
+        w_$cpdOk <- e$cpdOk
+        if(!is.null(e$score_cutoff))
+          w_$score_cutoff <- e$score_cutoff 
+      })
+      
+      invalidate$specOK_FE <- TRUE
+      invalidate$cpdOK_FE <- TRUE
+      
       showNotification("Restore complete")
     })
     
