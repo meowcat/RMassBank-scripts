@@ -620,26 +620,37 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       
       eic <- eicData() %>%
         group_by(rowid) %>%
+        filter(rowid %in% c("parent", origRowId)) %>%
         dplyr::mutate(relint = intensity / max(intensity, na.rm = TRUE))
+      
+
       
       getPeakLabel <- Vectorize(function(rowid_) {
         if(rowid_ == "parent")
-          return("parent")
+          return(glue("parent\n(tic {format(sp@tic, digits=2, scientific=TRUE)})"))
         peaks %>% 
           filter(rowid == as.integer(rowid_)) %>%
-          glue_data("{round(mz, 4)}")
+          glue_data("{round(mz, 4)}\n({format(intensity, digits=2, scientific=TRUE)})")
         })
+      
+      # scaleInfo <- eic %>%
+      #   dplyr::summarize(imax = max(intensity)) %>%
+      #   glue_data("{getPeakLabel(rowid)}: int {format(imax, scientific=TRUE)}")
         
       output$eicPeakPlot <- renderPlot({
         eic %>%
-          filter(rowid %in% c("parent", origRowId)) %>%
           left_join(peaks %>% mutate(rowid = as.character(rowid)), by = "rowid") %>%
           ggplot() +
           aes(x=rt, y=relint, color = rowid) +
           scale_color_discrete(labels = getPeakLabel) +
           geom_line() + 
           geom_point() +
+          # annotate("text", 
+          #          label = scaleInfo %>% paste0(collapse="\n"),
+          #          x = Inf, y = Inf,
+          #          hjust = 1, vjust = 1) +
           theme_minimal()
+        
       })
       # 
     })
