@@ -6,7 +6,7 @@ library(glue)
 library(fs)
 library(assertthat)
 
-source(here("functions.R"))
+source(here::here("functions.R"))
 
 loadList("results/compoundsRmb.csv")
 loadRmbSettings("input/RmbSettings.ini")
@@ -58,12 +58,13 @@ walk(charge_strs, function(charge_str) {
     attr(w_@spectra[[i]], "threshold") <- cpdOk$threshold[[i]]
   }
   w_@spectra <- w_@spectra[cpdOk$ok]
+  w_@files <- w_@files[cpdOk$ok]
   
   # Have a fallback in case eicScoreCor was not set for whatever reason
   metric <- "eicScoreCor"
-  if(!is.na(score_cutoff))
+  if(!is.na(score_cutoff)) {
     eicScoreLimit <- score_cutoff
-  else {
+  } else {
     warning("score cutoff could not be read from review data, using calculated default")
     eicScoreLimit <- attr(w_, "eicScoreFilter")[[metric]]
   }
@@ -72,6 +73,7 @@ walk(charge_strs, function(charge_str) {
   w_@spectra <- as(lapply(w_@spectra, function(cpd) {
     specOK <- attr(cpd, "specOK")
     assert_that(nrow(specOK) == length(cpd@children))
+  
     for(i in seq_along(cpd@children)) {
       cpd@children[[i]]@ok <- specOK$ok[[i]]
       attr(cpd@children[[i]], "threshold") <- specOK$threshold[[i]]
@@ -86,9 +88,11 @@ walk(charge_strs, function(charge_str) {
         attr(sp, "threshold")
       )
       threshold <- tail(thresholds[!is.na(thresholds)], 1)
+      if(!sp@ok)
+        return(sp)
       
       d <- getData(sp)
-      d <- d %>% group_by(mz) %>% arrange(!good, abs(dppm)) %>% slice(1)
+      d <- d %>% group_by(mz) %>% arrange(!good, desc(formulaMultiplicity), abs(dppm)) %>% slice(1)
       d <- d %>% mutate(
         good_ = good,
         good = (eicScoreCor > threshold) & !satellite & !low
