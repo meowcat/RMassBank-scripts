@@ -45,7 +45,8 @@ loadRmbSettings("input/RmbSettings.ini")
 charge_strs <- c("pH", "mH")
 
 walk(charge_strs, function(charge_str) {
-  
+# charge_str <- "pH"
+
   w <- loadMsmsWorkspace(
     glue("results/spectra-{charge_str}-processed.RData"))
 
@@ -103,6 +104,7 @@ w@spectra <- lapply(w@spectra, function(cpd) {
     eics <- lapply(property(sp, "mzRaw"), function(mz) {
       eic <- findEIC(d, mz, ppm(mz, ppmEic, p = TRUE), headerCache = hSub, peaksCache = pSub)
       eic$precursorScan <- hSub$precursorScanNum
+      eic$mz <- mz
       eic
     })
     
@@ -128,7 +130,8 @@ w@spectra <- lapply(w@spectra, function(cpd) {
   cpd@children <- lapply(cpd@children, function(sp) {
     eic <- attr(sp, "eic") %>%
       bind_rows(.id = "mzIndex") %>%
-        mutate(mzIndex = as.numeric(as.character(mzIndex))) %>%
+        dplyr::mutate(mzIndex = as.numeric(as.character(mzIndex))) %>%
+        dplyr::select(-mz) %>%
         pivot_wider(names_from = c("mzIndex"), values_from = "intensity", names_prefix = "mz_")
       
       eicPrecursor <- attr(cpd, "eic")
@@ -170,7 +173,8 @@ ag <- ag %>%
     # dplyr::mutate(good = abs(dppm) < ppmGood) %>%
   dplyr::group_by(cpdID, scan, mzFound) %>% 
   dplyr::arrange(!good, abs(dppm)) %>% 
-  dplyr::slice(1)
+  dplyr::slice(1) #%>%
+  # dplyr::filter(mz > getOption("RMassBank")$filterSettings$massRangeDivision)
 # for every formula, keep the best correlation of all children;
 # when no formula present, keep the peak alone
 ag$formula_ <- factor(ag$formula) %>% as.numeric()
@@ -317,4 +321,5 @@ attr(w, "eicScoreFilter") <- list("eicScoreCor" = thresholdCor,
     w, 
     glue("results/spectra-{charge_str}-eics-score.RData")
   )
-  })
+  
+   }) # walk

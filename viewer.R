@@ -575,9 +575,15 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       sp <- cpd@children[[spectrum]]
       peaks <- getData(sp)
       
+      if(!("satellite" %in% colnames(peaks)))
+        peaks$satellite <- rep(FALSE, nrow(peaks))
+      if(!("formulaMultiplicity" %in% colnames(peaks)))
+        peaks$formulaMultiplicity <- rep(NA, nrow(peaks))
+      
       # Keep best entry per peak
       peaksFiltered <- peaks %>%
         rowid_to_column("rowid") %>%
+        dplyr::filter(!satellite) %>%
         group_by(mz) %>%
         arrange(!good, desc(formulaMultiplicity), abs(dppm)) %>%
         slice(1)
@@ -607,6 +613,7 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       cpdName <- data$cpdName
       sp <- data$sp
       
+      
       peaks$mzPrecursor <- rep(cpd@mz, nrow(peaks))
       if(!("filterOK" %in% colnames(peaks)))
         peaks$filterOK <- rep(FALSE, nrow(peaks))
@@ -614,7 +621,10 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
         peaks$formulaSource <- rep("", nrow(peaks))
       if(!("bestMultiplicity" %in% colnames(peaks)))
           peaks$bestMultiplicity <- rep(0, nrow(peaks))
+      if(!("formulaMultiplicity" %in% colnames(peaks)))
+        peaks$formulaMultiplicity <- rep(NA, nrow(peaks))
 
+      
       validTh <- validThreshold()
       filtered <- input$filterPeaksTable
       
@@ -716,6 +726,8 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
         filter(rowid %in% c("parent", origRowId)) %>%
         dplyr::mutate(relint = intensity / max(intensity, na.rm = TRUE))
       
+      message(unique(eic$mz))
+      
 
       
       getPeakLabel <- Vectorize(function(rowid_) {
@@ -792,11 +804,17 @@ viewer <- function(w, backupPath = fs::path(getwd(), "viewer_status.RData"))
       
       isolate({
         e <- new.env()
-        load(backupPath, envir = e)
-        w_$specOk <- e$specOk
-        w_$cpdOk <- e$cpdOk
-        if(!is.null(e$score_cutoff))
-          w_$score_cutoff <- e$score_cutoff 
+        if(fs::file_exists(backupPath)) {
+          load(backupPath, envir = e)
+          w_$specOk <- e$specOk
+          w_$cpdOk <- e$cpdOk
+          if(!is.null(e$score_cutoff))
+            w_$score_cutoff <- e$score_cutoff   
+        }
+        else
+        {
+          showNotification("No file to restore")
+        }
       })
       
       invalidate$specOK_FE <- TRUE
@@ -842,9 +860,14 @@ plotEicCor <- function(thresholds, cpd_, spectrum_, metric = metric_set) {
   else {
     d <- getData(cpd@children[[spectrum]])
     
+    
+    if(!("formulaMultiplicity" %in% colnames(d)))
+      d$formulaMultiplicity <- rep(NA, nrow(d))
+
     # Keep best entry per peak
     d <- d %>%
       dplyr::group_by(mz) %>%
+      dplyr::filter(!satellite) %>%
       dplyr::arrange(!good, desc(formulaMultiplicity), abs(dppm)) %>%
       dplyr::slice(1)
     # 
