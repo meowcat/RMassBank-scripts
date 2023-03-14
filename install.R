@@ -1,0 +1,26 @@
+BiocManager::install(c(
+  "devtools",
+  "DT",
+  "MSnbase",
+  "S4Vectors",
+  "assertthat",
+  "dplyr",
+  "fs",
+  "glue",
+  "gplots",
+  "here",
+  "mzR",
+  "pROC",
+  "plyr",
+  "reshape2",
+  "rhandsontable",
+  "shiny",
+  "shinyWidgets",
+  "shinybusy",
+  "tidyverse",
+  "zoo"))
+BiocManager::install(c(
+  "nutterb/shinydust",
+  "MassBank/RMassBank@dev"
+)
+)
