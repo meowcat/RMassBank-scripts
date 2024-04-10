@@ -27,7 +27,6 @@ w@spectra <- w@spectra[not_empty]
 w@files <- w@files[not_empty]
 
 
-
 # Apply the specified specOK cutoff to reduce excessive work for nothing
 w@spectra <- w@spectra %>% smap(function(ch) {
   d <- getData(ch)
@@ -39,10 +38,17 @@ w@spectra <- w@spectra %>% smap(function(ch) {
 
 # Check to exclude 0-spectra-found cpds
 w@spectra <- w@spectra %>% cmap(function(cpd) {
-  n_ok <- sum(cmap_lgl(cpd@children, ~ .x@ok))
+  n_ok <- sum(cmap_lgl(cpd@children, ~ isTRUE(.x@ok)))
   cpd@found <- n_ok > 0
   cpd
 })
+
+
+not_problematic <- w@spectra %>% cmap_lgl(function(cpd) isTRUE(cpd@found))
+message(glue("{w@files[!not_problematic]}: removing problematic compound\n\n"))
+w@spectra <- w@spectra[not_problematic]
+w@files <- w@files[not_problematic]
+
 
 archiveResults(
   w, 

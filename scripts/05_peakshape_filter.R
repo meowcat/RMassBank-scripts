@@ -88,9 +88,12 @@ w@spectra <- lapply(w@spectra, function(cpd) {
   headerData <- headerData[!is.na(headerData$precursorScanNum),]
   h <- headerData
   
-  
   if(length(cpd@children) == 0)
     return(cpd)
+  
+  if(!cpd@found)
+    return(cpd)
+  
   cpd@children <- lapply(cpd@children, function(sp) {
     hSub <- h %>% filter(
       abs(precursorMZ - sp@precursorMz) < precursorEps,
@@ -99,6 +102,11 @@ w@spectra <- lapply(w@spectra, function(cpd) {
       abs(retentionTime - sp@rt) < rtWindow,
       collisionEnergy == sp@collisionEnergy
     )
+    if(nrow(hSub) == 0)
+    {
+      attr(sp, "eics") <- list()
+      return(sp)
+    }
     hSub$msLevel <- 1
       pSub <- p[hSub$seqNum]
     eics <- lapply(property(sp, "mzRaw"), function(mz) {
@@ -125,11 +133,23 @@ w@spectra <- lapply(w@spectra, function(cpd) {
 w@spectra <- lapply(w@spectra, function(cpd) {
   if(length(cpd@children) == 0)
     return(cpd)
-    message(cpd@name)
-    
+  
+  if(!cpd@found)
+    return(cpd)
+
+  message(cpd@name)
+      
   cpd@children <- lapply(cpd@children, function(sp) {
     eic <- attr(sp, "eic") %>%
-      bind_rows(.id = "mzIndex") %>%
+      bind_rows(.id = "mzIndex")
+    if(nrow(eic) == 0)
+    {
+      sp <- addProperty(sp, "eicScoreCor", type = "numeric", NA)
+      sp <- addProperty(sp, "eicScoreDot", type = "numeric", NA)
+      return(sp)
+    }
+      
+    eic <- eic %>%
         dplyr::mutate(mzIndex = as.numeric(as.character(mzIndex))) %>%
         dplyr::select(-mz) %>%
         pivot_wider(names_from = c("mzIndex"), values_from = "intensity", names_prefix = "mz_")
