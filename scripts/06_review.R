@@ -4,8 +4,8 @@ library(RMassBank)
 loadRmbSettings("input/RmbSettings.ini")
 
 source("environment.R")
-source("viewer.R")
-source("functions.R")
+source("include/viewer.R")
+source("include/functions.R")
 
 charge_strs <- adducts
 charge_str <- charge_str_select(charge_strs)

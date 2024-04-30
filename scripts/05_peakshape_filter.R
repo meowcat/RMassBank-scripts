@@ -1,6 +1,6 @@
 
 source("environment.R")
-source("functions.R")
+source("include/functions.R")
 library(pROC)
 library(RMassBank)
 library(reshape2)

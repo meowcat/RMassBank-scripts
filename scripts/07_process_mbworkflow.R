@@ -5,7 +5,7 @@ library(fs)
 library(assertthat)
 
 source("environment.R")
-source("functions.R")
+source("include/functions.R")
 
 
 loadList("results/compoundsRmb.csv")

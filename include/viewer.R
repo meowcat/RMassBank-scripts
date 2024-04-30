@@ -12,7 +12,7 @@ library(DT)
 library(zoo)
 library(shinybusy)
 # library(keys)
-source("viewer-include.R")
+source("include/viewer-include.R")
 
 metric_set <- "eicScoreCor"
 
