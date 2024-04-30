@@ -6,13 +6,16 @@ library(dplyr)
 
 source("environment.R")
 
+if(!exists("column_of_id"))
+  column_of_id <- 3
+
 inFiles <- list.files(inputDir, ".mzML", full.names = T)
 
 compounds <- read.csv(compoundsCsv, sep=",")
 
 checkFiles <- data.frame(files = inFiles, stringsAsFactors = FALSE)
 checkFiles <- checkFiles %>% mutate(basefiles = basename(files)) %>%
-  mutate(id = strsplit(basefiles, '[_.]') %>% lapply(`[`, 3) %>% as.integer)
+  mutate(id = strsplit(basefiles, '[_.]') %>% lapply(`[`, column_of_id) %>% as.integer)
 
 compounds$found <- compounds$ID %in% checkFiles$id
 
