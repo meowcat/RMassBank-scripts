@@ -1,4 +1,3 @@
-library(here)
 
 source("environment.R")
 source("functions.R")
@@ -42,7 +41,7 @@ loadRmbSettings("input/RmbSettings.ini")
 
 
 
-charge_strs <- c("pH", "mH")
+charge_strs <- adducts
 
 walk(charge_strs, function(charge_str) {
 # charge_str <- "pH"

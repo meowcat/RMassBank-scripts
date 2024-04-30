@@ -1,12 +1,12 @@
-library(here)
-
 library(RMassBank)
 library(tidyverse)
 library(glue)
 library(fs)
 library(assertthat)
 
-source(here::here("functions.R"))
+source("environment.R")
+source("functions.R")
+
 
 loadList("results/compoundsRmb.csv")
 loadRmbSettings("input/RmbSettings.ini")
@@ -15,7 +15,7 @@ loadRmbSettings("input/RmbSettings.ini")
 
 infolists <- c()
 
-charge_strs <- c("pH", "mH")
+charge_strs <- adducts
 
 # Check that the necessary files exist
 walk(charge_strs, function(charge_str) {

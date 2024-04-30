@@ -5,8 +5,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
-# knitr::opts_knit$set(root.dir= "C:/Daten/Michele/20190625 Karin MassBank-QE/"
-# )
+knitr::opts_knit$set(root.dir= "C:/Data/Massbank/20240402_CyanoMetDB_H/RMassBank-scripts-master")
 ```
 
 ## Summary for each cpd
@@ -25,34 +24,34 @@ library(mzR)
 EIC with associated triggered MS/MS, per compound
 ```{r plots, echo=FALSE}
 #test
-w_pos <- loadMsmsWorkspace("results/spectra-pH-msmsRead.RData")
-w_neg <- loadMsmsWorkspace("results/spectra-mH-msmsRead.RData")
 
-for(i in seq_along(w_pos@spectra))
+source("environment.R")
+charge_strs <- adducts
+w_ <- purrr::map(charge_strs, function(charge_str) {
+  loadMsmsWorkspace(glue::glue(
+    "results/spectra-{charge_str}-msmsRead.RData"
+  ))
+})
+names(w_) <- charge_strs
+
+# note: this skips all data missing in the #1 charge_str
+for(i in seq_along(w_[[charge_strs[[1]]]]@spectra))
 {
-  cpd <- w_pos@spectra[[i]]
-  eic <- attr(cpd, "eic")
-  plot(intensity ~ rt, eic, type='l')
-  if(length(cpd@children) > 0)
-  {
-    msData <- laply(cpd@children, function(ch)
-      c(rt=ch@rt[[1]], tic=ch@tic[[1]]))
-    lines(tic ~ rt, msData, col="red", type='h')
+  for(charge_str in names(w_)) {
+    
+      cpd <- w_[[charge_str]]@spectra[[i]]
+      eic <- attr(cpd, "eic")
+      plot(intensity ~ rt, eic, type='l')
+      if(length(cpd@children) > 0)
+      {
+        msData <- laply(cpd@children, function(ch)
+          c(rt=ch@rt[[1]], tic=ch@tic[[1]]))
+        lines(tic ~ rt, msData, col="red", type='h')
+      }
+      found <- ifelse(cpd@found, "(OK)", "(not found)")
+      title(main=paste(cpd@name, charge_str, found))
+    
   }
-  found <- ifelse(cpd@found, "(OK)", "(not found)")
-  title(main=paste(cpd@name, "pos", found))
-  
-  cpd <- w_neg@spectra[[i]]
-  eic <- attr(cpd, "eic")
-  plot(intensity ~ rt, eic, type='l')
-  if(length(cpd@children) > 0)
-  {
-    msData <- laply(cpd@children, function(ch)
-      c(rt=ch@rt[[1]], tic=ch@tic[[1]]))
-    lines(tic ~ rt, msData, col="red", type='h')
-  }
-  found <- ifelse(cpd@found, "(OK)", "(not found)")
-  title(main=paste(cpd@name, "neg", found))
 }
 
 ```

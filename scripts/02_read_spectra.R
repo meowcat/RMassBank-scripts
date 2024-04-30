@@ -1,13 +1,8 @@
 
-library(here)
-
-
 library(RMassBank)
 library(mzR)
 library(plyr)
 library(dplyr)
-# dir <- "C:/Daten/Michele/20190625 Karin MassBank-QE/"
-# setwd(dir)
 
 source("environment.R")
 
@@ -40,48 +35,34 @@ compoundsMsRead <- compounds[compounds$found,c("ID", "files")]
 colnames(compoundsMsRead) <- c("ID", "Files")
 write.csv(compoundsMsRead, file="results/compoundsMsR.csv")
 
-# Process positive mode
-w <- newMsmsWorkspace()
-#wPeak <- msmsRead.peak(w, filetable="results/compoundsMsR.csv", readMethod="mzR", mode="pH" )
-w <- msmsRead(w, filetable="results/compoundsMsR.csv", readMethod="mzR", mode="pH" )
+charge_strs <- adducts
 
-eics <- alply(compoundsMsRead, 1, function(cpd)
+walk(charge_strs, function(charge_str) {
+  
+  
+  
+  w <- newMsmsWorkspace()
+  w <- msmsRead(w, filetable="results/compoundsMsR.csv", 
+                readMethod="mzR", mode=charge_str )
+  eics <- alply(compoundsMsRead, 1, function(cpd)
   {
-  message(cpd[["Files"]])
-  d <- openMSfile(cpd[["Files"]])
-  h <- header(d)
-  h <- h[h$polarity == 1,]
-  mz <- findMz(cpd[["ID"]], mode = "pH", ppm = 5)
-  findEIC(d, mz, headerCache = h)
+    message(cpd[["Files"]])
+    d <- openMSfile(cpd[["Files"]])
+    h <- header(d)
+    h <- h[h$polarity == RMassBank:::getAdductPolarity(charge_str),]
+    mz <- findMz(cpd[["ID"]], mode = charge_str, ppm = 5)
+    findEIC(d, mz, headerCache = h)
+  })
+  
+  
+  for(i in seq_along(w@spectra))
+  {
+    attr(w@spectra[[i]], "eic") <- eics[[i]]
+  }
+  archiveResults(w, glue::glue(
+    "results/spectra-{charge_str}-msmsRead.RData"
+    ))
+  
 })
-
-for(i in seq_along(w@spectra))
-{
-  attr(w@spectra[[i]], "eic") <- eics[[i]]
-}
-archiveResults(w, "results/spectra-pH-msmsRead.RData")
-
-# Process negative mode
-
-w <- newMsmsWorkspace()
-#wPeak <- msmsRead.peak(w, filetable="results/compoundsMsR.csv", readMethod="mzR", mode="mH" )
-w <- msmsRead(w, filetable="results/compoundsMsR.csv", readMethod="mzR", mode="mH" )
-eics <- alply(compoundsMsRead, 1, function(cpd)
-{
-  message(cpd[["Files"]])
-  d <- openMSfile(cpd[["Files"]])
-  h <- header(d)
-  h <- h[h$polarity == 0,]
-  mz <- findMz(cpd[["ID"]], mode = "mH", ppm = 10)
-  findEIC(d, mz, headerCache = h)
-})
-
-for(i in seq_along(w@spectra))
-{
-  attr(w@spectra[[i]], "eic") <- eics[[i]]
-}
-archiveResults(w, "results/spectra-mH-msmsRead.RData")
-
-
 
 

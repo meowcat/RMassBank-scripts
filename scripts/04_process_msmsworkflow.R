@@ -1,5 +1,3 @@
-library(here)
-
 source("environment.R")
 
 library(RMassBank)
@@ -30,14 +28,19 @@ o <- getOption("RMassBank")
 o$electronicNoise <- c()
 options(RMassBank = o)
 
-w <- loadMsmsWorkspace("results/spectra-pH-msmsRead.RData")
-w <- msmsWorkflow(w, "pH", c(2:4))
-archiveResults(w, "results/spectra-pH-processed-step4.RData")
-w <- msmsWorkflow(w, "pH", c(5:8))
-archiveResults(w, "results/spectra-pH-processed.RData")
+charge_strs <- adducts
 
-w <- loadMsmsWorkspace("results/spectra-mH-msmsRead.RData")
-w <- msmsWorkflow(w, "mH", c(2:4))
-archiveResults(w, "results/spectra-mH-processed-step4.RData")
-w <- msmsWorkflow(w, "mH", c(5:8))
-archiveResults(w, "results/spectra-mH-processed.RData")
+purrr::walk(charge_strs, function(charge_str) {
+  w <- loadMsmsWorkspace(glue::glue(
+    "results/spectra-{charge_str}-msmsRead.RData"
+    ))
+  w <- msmsWorkflow(w, charge_str, c(2:4))
+  archiveResults(w, glue::glue(
+    "results/spectra-{charge-str}-processed-step4.RData"
+    ))
+  w <- msmsWorkflow(w, charge_str, c(5:8))
+  archiveResults(w, glue::glue(
+    "results/spectra-{charge_str}-processed.RData"
+    ))
+})
+

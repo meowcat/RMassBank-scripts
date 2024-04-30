@@ -1,15 +1,13 @@
-library(here)
-
 library(tidyverse)
 library(glue)
 library(RMassBank)
 loadRmbSettings("input/RmbSettings.ini")
 
-
-source(here::here("viewer.R"))
+source("environment.R")
+source("viewer.R")
 source("functions.R")
 
-charge_strs <- c("pH", "mH")
+charge_strs <- adducts
 charge_str <- charge_str_select(charge_strs)
 # charge_str <- "pH"
 backupPath <- glue("results/viewer_status_{charge_str}.RData")
