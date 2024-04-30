@@ -36,7 +36,7 @@ purrr::walk(charge_strs, function(charge_str) {
     ))
   w <- msmsWorkflow(w, charge_str, c(2:4))
   archiveResults(w, glue::glue(
-    "results/spectra-{charge-str}-processed-step4.RData"
+    "results/spectra-{charge_str}-processed-step4.RData"
     ))
   w <- msmsWorkflow(w, charge_str, c(5:8))
   archiveResults(w, glue::glue(

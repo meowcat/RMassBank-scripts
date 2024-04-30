@@ -1,10 +1,10 @@
+source("environment.R")
 
 library(RMassBank)
 library(mzR)
 library(plyr)
 library(dplyr)
 
-source("environment.R")
 
 if(!exists("column_of_id"))
   column_of_id <- 3
@@ -40,9 +40,9 @@ write.csv(compoundsMsRead, file="results/compoundsMsR.csv")
 
 charge_strs <- adducts
 
-walk(charge_strs, function(charge_str) {
+purrr::walk(charge_strs, function(charge_str) {
   
-  
+  message(glue::glue("Processing adduct {charge_str}"))
   
   w <- newMsmsWorkspace()
   w <- msmsRead(w, filetable="results/compoundsMsR.csv", 
