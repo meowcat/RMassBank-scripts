@@ -20,7 +20,6 @@ BiocManager::install(c(
   "tidyverse",
   "zoo"))
 BiocManager::install(c(
-  "nutterb/shinydust",
   "MassBank/RMassBank@dev"
 )
 )
