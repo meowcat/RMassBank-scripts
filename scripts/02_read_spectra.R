@@ -2,7 +2,6 @@ source("environment.R")
 
 library(RMassBank)
 library(mzR)
-library(plyr)
 library(dplyr)
 
 
@@ -47,8 +46,9 @@ purrr::walk(charge_strs, function(charge_str) {
   w <- newMsmsWorkspace()
   w <- msmsRead(w, filetable="results/compoundsMsR.csv", 
                 readMethod="mzR", mode=charge_str )
-  eics <- alply(compoundsMsRead, 1, function(cpd)
+  eics <- purrr::pmap(compoundsMsRead, function(...)
   {
+    cpd <- list(...)
     message(cpd[["Files"]])
     d <- openMSfile(cpd[["Files"]])
     h <- header(d)

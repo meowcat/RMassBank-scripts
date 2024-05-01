@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = FALSE)
 
 
 library(RMassBank)
-library(plyr)
+library(purrr)
 library(mzR)
 
 ```
@@ -43,8 +43,10 @@ for(i in seq_along(w_[[charge_strs[[1]]]]@spectra))
       plot(intensity ~ rt, eic, type='l')
       if(length(cpd@children) > 0)
       {
-        msData <- laply(cpd@children, function(ch)
-          c(rt=ch@rt[[1]], tic=ch@tic[[1]]))
+        msData <- purrr::map_dfr(
+          cpd@children %>% as.list(), 
+          function(ch) c(rt=ch@rt[[1]], tic=ch@tic[[1]])
+          )
         lines(tic ~ rt, msData, col="red", type='h')
       }
       found <- ifelse(cpd@found, "(OK)", "(not found)")
